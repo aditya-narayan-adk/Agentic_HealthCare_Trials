@@ -41,17 +41,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="auth-page">
-
-      {/* Subtle grid background — same as OnboardingPage */}
-      <div className="fixed inset-0" style={{
-        backgroundColor: "var(--color-sidebar-bg)",
-        backgroundImage: `linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-                          linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)`,
-        backgroundSize: "48px 48px",
-      }} />
-
-      <div className="relative w-full max-w-md">
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "1.5rem",
+      backgroundColor: "var(--color-sidebar-bg)",
+      backgroundImage: `linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)`,
+      backgroundSize: "48px 48px",
+    }}>
+      <div style={{ width: "100%", maxWidth: "28rem" }}>
 
         {/* Brand mark */}
         <div className="flex items-center justify-center gap-2.5 mb-10">
