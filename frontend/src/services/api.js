@@ -34,10 +34,10 @@ async function request(endpoint, options = {}) {
 // ─── M2: Auth ────────────────────────────────────────────────────────────────
 
 export const authAPI = {
-  login: (email, password) =>
+  login: (email, password, company, role) =>
     request("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, company, role }),
     }),
 };
 

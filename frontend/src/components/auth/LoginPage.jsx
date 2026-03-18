@@ -13,25 +13,27 @@ import { useAuth } from "../../contexts/AuthContext";
 import { LogIn } from "lucide-react";
 
 const ROLE_ROUTES = {
-  admin:           "/admin",
-  reviewer:        "/reviewer",
+  admin: "/admin",
+  reviewer: "/reviewer",
   ethics_reviewer: "/ethics",
-  publisher:       "/publisher",
+  publisher: "/publisher",
 };
 
 export default function LoginPage() {
-  const [email,    setEmail]    = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const { login }  = useAuth();
-  const navigate   = useNavigate();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [company, setCompany] = userState("");
+  const [role, setRole] = useState("admin");
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(""); setLoading(true);
     try {
-      const user = await login(email, password);
+      const user = await login(email, password, company, role);
       navigate(ROLE_ROUTES[user.role] || "/");
     } catch (err) {
       setError(err.message);
@@ -86,6 +88,19 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-input-text)" }}>
+                  Company
+                </label>
+                <input
+                  type="text"
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
+                  placeholder="Your company name"
+                  required
+                  className="field-input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-input-text)" }}>
                   Email
                 </label>
                 <input
@@ -111,8 +126,39 @@ export default function LoginPage() {
                   className="field-input"
                 />
               </div>
-
-              <button type="submit" disabled={loading} className="btn--primary-full mt-2">
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>
+                  Role
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: "admin", label: "Admin" },
+                    { value: "reviewer", label: "Reviewer" },
+                    { value: "ethics_reviewer", label: "Ethics Reviewer" },
+                    { value: "publisher", label: "Publisher" },
+                  ].map((r) => (
+                    <label key={r.value}
+                      className="flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors"
+                      style={{
+                        borderColor: role === r.value ? "var(--color-accent)" : "var(--color-input-border)",
+                        backgroundColor: role === r.value ? "var(--color-accent-subtle)" : "var(--color-input-bg)",
+                      }}>
+                      <input
+                        type="radio"
+                        name="role"
+                        value={r.value}
+                        checked={role === r.value}
+                        onChange={() => setRole(r.value)}
+                        className="accent-emerald-500"
+                      />
+                      <span className="text-sm font-medium" style={{ color: "var(--color-input-text)" }}>
+                        {r.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <button type="submit" disabled={loading || !company} className="btn--primary-full mt-2">
                 <LogIn size={18} />
                 {loading ? "Signing in…" : "Sign In"}
               </button>
