@@ -24,7 +24,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [company, setCompany] = userState("");
+  const [company, setCompany] = useState("");
   const [role, setRole] = useState("admin");
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -84,7 +84,6 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Using a form element here is fine — no ProtectedRoute, just a plain page */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-input-text)" }}>
@@ -126,38 +125,69 @@ export default function LoginPage() {
                   className="field-input"
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>
                   Role
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: "admin", label: "Admin" },
-                    { value: "reviewer", label: "Reviewer" },
+                    { value: "admin",           label: "Admin" },
+                    { value: "reviewer",        label: "Reviewer" },
                     { value: "ethics_reviewer", label: "Ethics Reviewer" },
-                    { value: "publisher", label: "Publisher" },
-                  ].map((r) => (
-                    <label key={r.value}
-                      className="flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors"
-                      style={{
-                        borderColor: role === r.value ? "var(--color-accent)" : "var(--color-input-border)",
-                        backgroundColor: role === r.value ? "var(--color-accent-subtle)" : "var(--color-input-bg)",
-                      }}>
-                      <input
-                        type="radio"
-                        name="role"
-                        value={r.value}
-                        checked={role === r.value}
-                        onChange={() => setRole(r.value)}
-                        className="accent-emerald-500"
-                      />
-                      <span className="text-sm font-medium" style={{ color: "var(--color-input-text)" }}>
-                        {r.label}
-                      </span>
-                    </label>
-                  ))}
+                    { value: "publisher",       label: "Publisher" },
+                  ].map((r) => {
+                    const active = role === r.value;
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => setRole(r.value)}
+                        style={{
+                          display:         "flex",
+                          alignItems:      "center",
+                          gap:             "10px",
+                          padding:         "10px 14px",
+                          borderRadius:    "10px",
+                          border:          `1.5px solid ${active ? "var(--color-accent)" : "var(--color-input-border)"}`,
+                          backgroundColor: active ? "var(--color-accent-subtle)" : "var(--color-input-bg)",
+                          transition:      "border-color 0.15s, background-color 0.15s",
+                          textAlign:       "left",
+                          width:           "100%",
+                        }}
+                      >
+                        {/* Custom radio dot */}
+                        <div style={{
+                          width:           "14px",
+                          height:          "14px",
+                          borderRadius:    "50%",
+                          border:          `solid ${active ? "var(--color-accent)" : "var(--color-input-border)"}`,
+                          backgroundColor: active ? "var(--color-accent)" : "transparent",
+                          display:         "flex",
+                          alignItems:      "center",
+                          justifyContent:  "center",
+                          flexShrink:      0,
+                          transition:      "border-color 0.15s, background-color 0.15s",
+                          boxShadow:       active ? "0 0 0 3px var(--color-accent-subtle)" : "none",
+                        }}>
+                          {active && (
+                            <div style={{
+                              width:           "5px",
+                              height:          "5px",
+                              borderRadius:    "50%",
+                              backgroundColor: "white",
+                            }} />
+                          )}
+                        </div>
+                        <span className="text-sm font-medium" style={{ color: "var(--color-input-text)" }}>
+                          {r.label}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+
               <button type="submit" disabled={loading || !company} className="btn--primary-full mt-2">
                 <LogIn size={18} />
                 {loading ? "Signing in…" : "Sign In"}
