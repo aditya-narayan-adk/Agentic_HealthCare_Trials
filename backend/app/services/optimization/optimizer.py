@@ -86,7 +86,7 @@ class OptimizerService:
         if not analytics:
             return {"status": "no_data", "message": "No analytics data available yet"}
 
-        is_website = ad.ad_type.value == "website"
+        is_website = "website" in ad.ad_type
         weights = WEBSITE_WEIGHTS if is_website else AD_WEIGHTS
 
         # Average the metrics across all data points
@@ -119,7 +119,7 @@ class OptimizerService:
 
         return {
             "status": "analyzed",
-            "ad_type": ad.ad_type.value,
+            "ad_type": ad.ad_type,
             "weighted_score": round(weighted_score, 2),
             "metrics": metrics,
             "weights_used": weights,
@@ -162,7 +162,7 @@ Analyze performance data and reviewer context to produce specific, actionable su
 Each suggestion should include: what to change, expected impact, and priority level.
 Respond ONLY with a JSON object."""
 
-        user_message = f"""## Advertisement: {ad.title} ({ad.ad_type.value})
+        user_message = f"""## Advertisement: {ad.title} ({", ".join(ad.ad_type)})
 
 ## Performance Analysis
 {json.dumps(perf_analysis, indent=2)}

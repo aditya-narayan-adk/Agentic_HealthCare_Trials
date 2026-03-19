@@ -83,7 +83,7 @@ Incorporate all human feedback and produce an updated review output.
         return f"""## Strategy to Review
 
 **Advertisement:** {ad.title}
-**Type:** {ad.ad_type.value}
+**Type:** {", ".join(ad.ad_type)}
 **Budget:** {ad.budget or 'Not specified'}
 
 ### Strategy JSON

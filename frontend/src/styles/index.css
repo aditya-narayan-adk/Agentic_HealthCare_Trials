@@ -373,6 +373,12 @@ body {
     border-color:     var(--color-accent);
     background-color: var(--color-accent-subtle);
   }
+  .type-option--disabled {
+    @apply type-option;
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .type-option--disabled:hover { border-color: var(--color-card-border); }
 
 
   /* ── PLATFORM TOGGLE PILLS ───────────────────────────────────────────────── */

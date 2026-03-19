@@ -19,18 +19,14 @@ import { Globe, Image, Bot, MessageSquare, Sparkles } from "lucide-react";
  *  Handles: Error instances, FastAPI {detail: string|[...]}, plain objects, strings. */
 function extractErrorMessage(err) {
   if (!err) return "An unknown error occurred.";
-  // Plain string
   if (typeof err === "string") return err;
-  // FastAPI validation errors: { detail: [{msg, loc, type}, ...] }
   if (err.detail) {
     if (Array.isArray(err.detail)) {
       return err.detail.map((d) => `${d.loc?.join(" → ") ?? ""}: ${d.msg}`).join("\n");
     }
     return String(err.detail);
   }
-  // Standard Error / axios-style error with a message string
   if (err.message && typeof err.message === "string") return err.message;
-  // Fallback: JSON dump so devs can see the shape
   try { return JSON.stringify(err, null, 2); } catch { return String(err); }
 }
 
@@ -91,17 +87,13 @@ export default function CampaignCreator() {
   const handleCreate = async () => {
     setLoading(true);
     try {
-      // TODO: wire to backend once schema accepts ad_types (plural)
-      // const ad = await adsAPI.create({ ... });
-      const ad = {
-        id:       `mock-${Date.now()}`,
-        title:    form.title,
-        ad_types: form.ad_types,
-        budget:   form.budget ? parseFloat(form.budget) : null,
-        platforms: form.platforms,
+      const ad = await adsAPI.create({
+        title:           form.title,
+        ad_type:         form.ad_types,
+        budget:          form.budget ? parseFloat(form.budget) : null,
+        platforms:       form.platforms,
         target_audience: form.target_audience,
-        status:   "draft",
-      };
+      });
       setCreatedAd(ad);
     } catch (err) { alert("Campaign creation failed:\n\n" + extractErrorMessage(err)); }
     finally { setLoading(false); }
@@ -140,9 +132,9 @@ export default function CampaignCreator() {
           >
             <div className="grid grid-cols-2 gap-3">
               {AD_TYPES.map((t) => {
-                const Icon    = t.icon;
-                const active  = form.ad_types.includes(t.value);
-                const locked  = !!t.requiresWebsite && !websiteSelected;
+                const Icon   = t.icon;
+                const active = form.ad_types.includes(t.value);
+                const locked = !!t.requiresWebsite && !websiteSelected;
 
                 return (
                   <div
@@ -289,7 +281,7 @@ export default function CampaignCreator() {
               <Sparkles size={28} style={{ color: "var(--color-accent)" }} />
             </div>
             <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-              Campaign created with: <strong>{createdAd.ad_types?.join(", ")}</strong>.
+              Campaign created with: <strong>{createdAd.ad_type?.join(", ")}</strong>.
               Generate an AI marketing strategy and submit for review?
             </p>
             <button onClick={handleGenerate} disabled={generating} className="btn--accent px-8 py-2.5">

@@ -8,7 +8,7 @@ Each schema group corresponds to a specific module.
 """
 
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -37,11 +37,21 @@ class AdStatusEnum(str, Enum):
     paused = "paused"
     optimizing = "optimizing"
 
+class DocumentTypeEnum(str, Enum):
+    usp = "usp"
+    compliance = "compliance"
+    policy = "policy"
+    marketing_goal = "marketing_goal"
+    ethical_guideline = "ethical_guideline"
+    reference = "reference"
+    protocol = "protocol"
+    input = "input"
+
 
 # ─── Auth Schemas ─────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 class TokenResponse(BaseModel):
@@ -58,7 +68,7 @@ class OnboardingRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=256)
     industry: Optional[str] = None
     logo_url: Optional[str] = None
-    admin_email: str
+    admin_email: EmailStr
     admin_password: str = Field(..., min_length=8)
     admin_name: str
 
@@ -71,7 +81,7 @@ class OnboardingResponse(BaseModel):
 # ─── User Schemas ─────────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
-    email: str
+    email: EmailStr
     password: str = Field(..., min_length=8)
     full_name: str
     role: UserRoleEnum
@@ -91,7 +101,7 @@ class UserOut(BaseModel):
 # ─── Company Document Schemas ─────────────────────────────────────────────────
 
 class DocumentCreate(BaseModel):
-    doc_type: str
+    doc_type: DocumentTypeEnum
     title: str
     content: Optional[str] = None
 
@@ -99,7 +109,7 @@ class DocumentOut(BaseModel):
     id: str
     doc_type: str
     title: str
-    content: Optional[str]
+    content: Optional[str] = None
     priority: int
     version: int
     updated_at: datetime
@@ -116,8 +126,8 @@ class DocumentUpdate(BaseModel):
 # ─── Advertisement Schemas ────────────────────────────────────────────────────
 
 class AdvertisementCreate(BaseModel):
-    title: str
-    ad_type: AdTypeEnum
+    title: str = Field(..., min_length=1, max_length=512)
+    ad_type: List[AdTypeEnum]
     budget: Optional[float] = None
     platforms: Optional[List[str]] = None
     target_audience: Optional[Dict[str, Any]] = None
@@ -125,15 +135,15 @@ class AdvertisementCreate(BaseModel):
 class AdvertisementOut(BaseModel):
     id: str
     title: str
-    ad_type: AdTypeEnum
+    ad_type: List[str]
     status: AdStatusEnum
-    budget: Optional[float]
-    platforms: Optional[List[str]]
-    strategy_json: Optional[Dict[str, Any]]
-    review_notes: Optional[str]
-    website_reqs: Optional[Dict[str, Any]]
-    ad_details: Optional[Dict[str, Any]]
-    output_url: Optional[str]
+    budget: Optional[float] = None
+    platforms: Optional[List[str]] = None
+    strategy_json: Optional[Dict[str, Any]] = None
+    review_notes: Optional[str] = None
+    website_reqs: Optional[Dict[str, Any]] = None
+    ad_details: Optional[Dict[str, Any]] = None
+    output_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -151,8 +161,8 @@ class AdvertisementUpdate(BaseModel):
 # ─── Review Schemas ───────────────────────────────────────────────────────────
 
 class ReviewCreate(BaseModel):
-    review_type: str   # "strategy" | "ethics" | "performance"
-    status: str = "pending"
+    review_type: Literal["strategy", "ethics", "performance"]
+    status: Literal["pending", "approved", "rejected", "revision"] = "pending"
     comments: Optional[str] = None
     suggestions: Optional[Dict[str, Any]] = None
     edited_strategy: Optional[Dict[str, Any]] = None
@@ -163,8 +173,9 @@ class ReviewOut(BaseModel):
     reviewer_id: str
     review_type: str
     status: str
-    comments: Optional[str]
-    suggestions: Optional[Dict[str, Any]]
+    comments: Optional[str] = None
+    suggestions: Optional[Dict[str, Any]] = None
+    edited_strategy: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     class Config:
@@ -177,15 +188,15 @@ class AnalyticsOut(BaseModel):
     id: str
     advertisement_id: str
     recorded_at: datetime
-    user_retention: Optional[float]
-    click_rate: Optional[float]
-    follow_through: Optional[float]
-    views: Optional[int]
-    likes: Optional[int]
-    demographics: Optional[Dict[str, Any]]
-    impressions: Optional[int]
-    conversions: Optional[int]
-    cost_per_click: Optional[float]
+    user_retention: Optional[float] = None
+    click_rate: Optional[float] = None
+    follow_through: Optional[float] = None
+    views: Optional[int] = None
+    likes: Optional[int] = None
+    demographics: Optional[Dict[str, Any]] = None
+    impressions: Optional[int] = None
+    conversions: Optional[int] = None
+    cost_per_click: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -199,7 +210,7 @@ class OptimizerSuggestion(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 class OptimizerDecision(BaseModel):
-    decision: str   # "accepted" | "rejected" | "partial"
+    decision: Literal["accepted", "rejected", "partial"]
     applied_changes: Optional[Dict[str, Any]] = None
 
 
@@ -219,7 +230,7 @@ class SkillOut(BaseModel):
     id: str
     skill_type: str
     version: int
-    lessons_learnt: Optional[str]
+    lessons_learnt: Optional[str] = None
     updated_at: datetime
 
     class Config:

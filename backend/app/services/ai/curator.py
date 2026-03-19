@@ -78,7 +78,7 @@ class CuratorService:
         # Advertisement parameters
         sections.append(f"""## Advertisement Brief
 - Title: {ad.title}
-- Type: {ad.ad_type.value}
+- Type: {", ".join(ad.ad_type)}
 - Budget: {ad.budget or 'Not specified'}
 - Platforms: {json.dumps(ad.platforms) if ad.platforms else 'Not specified'}
 - Target Audience: {json.dumps(ad.target_audience) if ad.target_audience else 'Not specified'}

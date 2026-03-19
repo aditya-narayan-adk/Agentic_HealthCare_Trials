@@ -12,7 +12,7 @@ import enum
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Text, DateTime, ForeignKey, Enum, Boolean,
-    Integer, Float, JSON, LargeBinary,
+    Integer, Float, JSON,
 )
 from sqlalchemy.orm import relationship
 from app.db.database import Base
@@ -77,8 +77,9 @@ class Company(Base):
     # Relationships
     users           = relationship("User", back_populates="company", cascade="all, delete-orphan")
     documents       = relationship("CompanyDocument", back_populates="company", cascade="all, delete-orphan")
-    advertisements  = relationship("Advertisement", back_populates="company", cascade="all, delete-orphan")
-    skills          = relationship("SkillConfig", back_populates="company", cascade="all, delete-orphan")
+    advertisements        = relationship("Advertisement", back_populates="company", cascade="all, delete-orphan")
+    skills                = relationship("SkillConfig", back_populates="company", cascade="all, delete-orphan")
+    reinforcement_logs    = relationship("ReinforcementLog", back_populates="company", cascade="all, delete-orphan")
 
 
 # ─── User ─────────────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ class Advertisement(Base):
     id              = Column(String, primary_key=True, default=_uuid)
     company_id      = Column(String, ForeignKey("companies.id"), nullable=False)
     title           = Column(String(512), nullable=False)
-    ad_type         = Column(Enum(AdType), nullable=False)
+    ad_type         = Column(JSON, nullable=False)          # List[str]: ["website","ads","voicebot","chatbot"]
     status          = Column(Enum(AdStatus), default=AdStatus.DRAFT)
     budget          = Column(Float, nullable=True)
     platforms       = Column(JSON, nullable=True)       # ["instagram", "google", ...]
@@ -169,10 +170,11 @@ class Advertisement(Base):
     created_at      = Column(DateTime, default=datetime.utcnow)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    company         = relationship("Company", back_populates="advertisements")
-    reviews         = relationship("Review", back_populates="advertisement", cascade="all, delete-orphan")
-    analytics       = relationship("AdAnalytics", back_populates="advertisement", cascade="all, delete-orphan")
-    optimizer_logs  = relationship("OptimizerLog", back_populates="advertisement", cascade="all, delete-orphan")
+    company              = relationship("Company", back_populates="advertisements")
+    reviews              = relationship("Review", back_populates="advertisement", cascade="all, delete-orphan")
+    analytics            = relationship("AdAnalytics", back_populates="advertisement", cascade="all, delete-orphan")
+    optimizer_logs       = relationship("OptimizerLog", back_populates="advertisement", cascade="all, delete-orphan")
+    reinforcement_logs   = relationship("ReinforcementLog", back_populates="advertisement")
 
 
 # ─── Review ───────────────────────────────────────────────────────────────────
@@ -249,3 +251,6 @@ class ReinforcementLog(Base):
     formalized_doc   = Column(Text, nullable=True)         # RAG-processed reference document
     applied_to_skill = Column(Boolean, default=False)
     created_at       = Column(DateTime, default=datetime.utcnow)
+
+    company       = relationship("Company", back_populates="reinforcement_logs")
+    advertisement = relationship("Advertisement", back_populates="reinforcement_logs")

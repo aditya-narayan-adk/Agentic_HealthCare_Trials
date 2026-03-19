@@ -121,7 +121,7 @@ class ReinforcementService:
             "advertisement": {
                 "id": ad_id,
                 "title": ad.title if ad else "Unknown",
-                "type": ad.ad_type.value if ad else "Unknown",
+                "type": ", ".join(ad.ad_type) if ad else "Unknown",
                 "strategy": ad.strategy_json if ad else None,
             },
             "optimizer_suggestions": opt_log.suggestions,
