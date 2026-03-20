@@ -1,7 +1,7 @@
 /**
  * Frontend API Service Layer
  * Owner: Frontend Dev 1
- * 
+ *
  * Centralized API calls. Each section maps to a backend module.
  * All functions return parsed JSON or throw errors.
  */
@@ -76,7 +76,7 @@ export const onboardingAPI = {
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-    if (!res.ok) throw new Error("Upload failed");
+    if (!res.ok) throw new Error("Document upload failed");
     return res.json();
   },
 

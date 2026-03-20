@@ -1,22 +1,22 @@
 /**
  * M9: Onboarding UI
  * Owner: Frontend Dev 1
- * Dependencies: onboardingAPI, authAPI
+ * Dependencies: onboardingAPI, authAPI, AuthContext
  *
  * This file is the orchestrator only — state, API calls, and navigation logic.
  * Each step's UI lives in its own file under ./steps/.
  *
  * File structure:
  *   onboarding/
- *   ├── OnboardingPage.jsx        ← you are here
- *   ├── StepIndicator.jsx         ← top progress bar
- *   ├── constants.js              ← STEPS, DOC_TYPES, BRAND_PRESETS
+ *   ├── OnboardingPage.jsx          ← you are here
+ *   ├── StepIndicator.jsx           ← top progress bar
+ *   ├── Constants.jsx               ← STEPS, DOC_TYPES, BRAND_PRESETS
  *   └── steps/
- *       ├── CompanyInfoStep.jsx   ← step 0
- *       ├── AdminAccountStep.jsx  ← step 1
+ *       ├── CompanyInfoStep.jsx     ← step 0
+ *       ├── AdminAccountStep.jsx    ← step 1
  *       ├── UploadDocumentsStep.jsx ← step 2
- *       ├── BrandKitStep.jsx      ← step 3
- *       └── AITrainingStep.jsx    ← step 4
+ *       ├── BrandKitStep.jsx        ← step 3
+ *       └── AITrainingStep.jsx      ← step 4
  *
  * Navigation rules:
  *  - Already-visited steps are clickable (click dot/label to jump back).
@@ -26,6 +26,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onboardingAPI, authAPI } from "../../services/api";
+import { useAuth } from "../../contexts/AuthContext";
 import { X } from "lucide-react";
 
 import StepIndicator        from "./StepIndicator";
@@ -48,27 +49,38 @@ function useHighWaterMark(step) {
 
 export default function OnboardingPage() {
   const navigate = useNavigate();
+  const { hydrateUser } = useAuth();
 
-  // ── Wizard state ────────────────────────────────────────────────────────
+  // ── Wizard state ──────────────────────────────────────────────────────────
   const [step,    setStep]    = useState(0);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
   const highWaterMark = useHighWaterMark(step);
 
-  // ── Step 0 & 1: shared form ──────────────────────────────────────────────
+  // ── Step 0 & 1: shared form ────────────────────────────────────────────────
   const [form, setForm] = useState({
-    company_name: "", industry: "", logo_url: "",
-    admin_email: "", admin_password: "", admin_name: "",
+    company_name: "",
+    industry: "",
+    // TODO(backend+frontend): logo_url is always empty string during onboarding.
+    // CompanyInfoStep manages logoFile in its own local state and has no way to
+    // upload a binary to get back a URL before registration.
+    // Resolution: add a dedicated logo upload endpoint (or a multipart variant
+    // of POST /onboarding/) and lift logoFile state up to this component.
+    // For now, logo_url is omitted from the registration payload.
+    admin_email: "",
+    admin_password: "",
+    admin_name: "",
   });
   const updateForm = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  // ── Step 1: registration result ─────────────────────────────────────────
+  // ── Step 1: registration result ────────────────────────────────────────────
   const [companyId, setCompanyId] = useState(null);
 
-  // ── Step 2: documents ────────────────────────────────────────────────────
-  const [docs, setDocs] = useState([]);  // each entry: { doc_type, title, file, file_name, file_size, file_type }
+  // ── Step 2: documents ──────────────────────────────────────────────────────
+  // Each entry: { doc_type, title, file, file_name, file_size, file_type }
+  const [docs, setDocs] = useState([]);
 
-  // ── Step 3: brand kit ────────────────────────────────────────────────────
+  // ── Step 3: brand kit ──────────────────────────────────────────────────────
   const [brand, setBrand] = useState({
     primaryColor: "#10b981", secondaryColor: "#0f172a", accentColor: "#6366f1",
     primaryFont: "DM Sans", secondaryFont: "Merriweather",
@@ -77,17 +89,18 @@ export default function OnboardingPage() {
   const [selectedPreset, setSelectedPreset] = useState(null);
   const [brandPdfFile,   setBrandPdfFile]   = useState(null);
 
-  // ── Step 4: training ─────────────────────────────────────────────────────
+  // ── Step 4: training ───────────────────────────────────────────────────────
   const [trainingDone, setTrainingDone] = useState(false);
 
-  // ── Navigation helpers ───────────────────────────────────────────────────
+  // ── Navigation helpers ─────────────────────────────────────────────────────
   const goToStep = (i) => {
     if (i <= highWaterMark) { setError(""); setStep(i); }
   };
 
-  // ── API handlers ─────────────────────────────────────────────────────────
-  // Step 1 — just validates fields and advances; no API call yet.
-  // Actual registration happens in handleTrain (Step 4) so an account
+  // ── API handlers ───────────────────────────────────────────────────────────
+
+  // Step 1 — validates fields and advances; no API call yet.
+  // Actual registration is deferred to handleTrain (Step 4) so an account
   // is only created once the user completes the full onboarding flow.
   const handleAdvanceFromAdmin = () => {
     setError("");
@@ -95,25 +108,62 @@ export default function OnboardingPage() {
   };
 
   const handleTrain = async () => {
-    setLoading(true); setError("");
+    setLoading(true);
+    setError("");
     try {
-      // Register the company + admin account first (deferred from Step 1)
-      const res = await onboardingAPI.register(form);
-      setCompanyId(res.company_id);
+      // 1. Register company + admin (deferred from Step 1).
+      //    logo_url intentionally omitted — see TODO above.
+      const registerPayload = {
+        company_name:   form.company_name,
+        industry:       form.industry,
+        admin_email:    form.admin_email,
+        admin_password: form.admin_password,
+        admin_name:     form.admin_name,
+      };
+      const registerRes = await onboardingAPI.register(registerPayload);
+      setCompanyId(registerRes.company_id);
 
-      // Log in to get the auth token before hitting protected endpoints
+      // 2. Log in to get auth token — required for all subsequent protected calls.
       const loginRes = await authAPI.login(form.admin_email, form.admin_password);
-      localStorage.setItem("token", loginRes.access_token);
 
-      // Now kick off AI skill training with all collected data
+      // 3. Hydrate AuthContext so ProtectedRoute allows the /admin redirect.
+      //    TODO(backend): company_name is not in TokenResponse yet, so
+      //    companyName will be null here until the backend adds it.
+      hydrateUser({
+        id:          loginRes.user_id,
+        role:        loginRes.role,
+        companyId:   loginRes.company_id,
+        companyName: loginRes.company_name ?? null,
+        token:       loginRes.access_token,
+      });
+
+      // 4. Upload each collected document one by one.
+      //    The token is now in localStorage (set by hydrateUser via AuthContext).
+      for (const doc of docs) {
+        await onboardingAPI.uploadDocument(
+          doc.doc_type,
+          doc.title,
+          null,       // content: files are uploaded as binary, not text
+          doc.file,
+        );
+      }
+
+      // TODO(backend): Brand kit has no dedicated endpoint yet.
+      // Once POST /onboarding/brand-kit (or equivalent) is available,
+      // send `brand`, `selectedPreset`, and `brandPdfFile` here before
+      // triggering training so the trainer has brand context available.
+
+      // 5. Trigger AI skill initialization.
       await onboardingAPI.triggerTraining();
       setTrainingDone(true);
     } catch (err) {
       setError(err?.message || "Setup failed. Please try again.");
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{
       minHeight: "100vh",
@@ -155,62 +205,61 @@ export default function OnboardingPage() {
             )}
 
             <ErrorBoundary>
-            {step === 0 && (
-              <CompanyInfoStep
-                form={form}
-                updateForm={updateForm}
-                onNext={() => setStep(1)}
-                setError={setError}
-              />
-            )}
+              {step === 0 && (
+                <CompanyInfoStep
+                  form={form}
+                  updateForm={updateForm}
+                  onNext={() => setStep(1)}
+                  setError={setError}
+                />
+              )}
 
-            {step === 1 && (
-              <AdminAccountStep
-                form={form}
-                updateForm={updateForm}
-                loading={loading}
-                onBack={() => goToStep(0)}
-                onRegister={handleAdvanceFromAdmin}
-              />
-            )}
+              {step === 1 && (
+                <AdminAccountStep
+                  form={form}
+                  updateForm={updateForm}
+                  loading={loading}
+                  onBack={() => goToStep(0)}
+                  onRegister={handleAdvanceFromAdmin}
+                />
+              )}
 
-            {step === 2 && (
-              <UploadDocumentsStep
-                docs={docs}
-                onAddDoc={(entry) => setDocs((p) => [...p, entry])}
-                onRemoveDoc={(i) => setDocs((p) => p.filter((_, idx) => idx !== i))}
-                loading={loading}
-                onBack={() => goToStep(1)}
-                onNext={() => setStep(3)}
-              />
-            )}
+              {step === 2 && (
+                <UploadDocumentsStep
+                  docs={docs}
+                  onAddDoc={(entry) => setDocs((p) => [...p, entry])}
+                  onRemoveDoc={(i) => setDocs((p) => p.filter((_, idx) => idx !== i))}
+                  loading={loading}
+                  onBack={() => goToStep(1)}
+                  onNext={() => setStep(3)}
+                />
+              )}
 
-            {step === 3 && (
-              <BrandKitStep
-                industry={form.industry}
-                brand={brand}
-                setBrand={setBrand}
-                selectedPreset={selectedPreset}
-                setSelectedPreset={setSelectedPreset}
-                brandPdfFile={brandPdfFile}
-                setBrandPdfFile={setBrandPdfFile}
-                setError={setError}
-                onBack={() => goToStep(2)}
-                onNext={() => setStep(4)}
-                onSkip={() => setStep(4)}
-              />
-            )}
+              {step === 3 && (
+                <BrandKitStep
+                  industry={form.industry}
+                  brand={brand}
+                  setBrand={setBrand}
+                  selectedPreset={selectedPreset}
+                  setSelectedPreset={setSelectedPreset}
+                  brandPdfFile={brandPdfFile}
+                  setBrandPdfFile={setBrandPdfFile}
+                  setError={setError}
+                  onBack={() => goToStep(2)}
+                  onNext={() => setStep(4)}
+                  onSkip={() => setStep(4)}
+                />
+              )}
 
-            {step === 4 && (
-              <AITrainingStep
-                loading={loading}
-                trainingDone={trainingDone}
-                onTrain={handleTrain}
-                onBack={() => goToStep(3)}
-                onFinish={() => navigate("/admin")}
-              />
-            )}
-
+              {step === 4 && (
+                <AITrainingStep
+                  loading={loading}
+                  trainingDone={trainingDone}
+                  onTrain={handleTrain}
+                  onBack={() => goToStep(3)}
+                  onFinish={() => navigate("/admin")}
+                />
+              )}
             </ErrorBoundary>
 
           </div>

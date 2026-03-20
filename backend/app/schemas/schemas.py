@@ -53,12 +53,15 @@ class DocumentTypeEnum(str, Enum):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    company: str
+    role: UserRoleEnum
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     role: UserRoleEnum
     company_id: str
+    company_name: str
     user_id: str
 
 
