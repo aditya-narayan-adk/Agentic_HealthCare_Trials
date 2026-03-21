@@ -9,7 +9,7 @@ services:
       - ./backend:/app
       - ./skills:/app/skills
     environment:
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./marketing_platform.db}
+      - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY:-dev-secret-change-in-production}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
