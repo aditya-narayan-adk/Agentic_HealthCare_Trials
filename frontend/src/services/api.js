@@ -25,10 +25,8 @@ async function request(endpoint, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    // FastAPI can return detail as a string OR an array of validation error objects
     let message;
     if (Array.isArray(err.detail)) {
-      // Pydantic validation errors: [{loc: [...], msg: "...", type: "..."}]
       message = err.detail
         .map((d) => {
           const field = Array.isArray(d.loc) ? d.loc.filter(x => x !== "body").join(" → ") : "";
@@ -46,6 +44,7 @@ async function request(endpoint, options = {}) {
 
 // ─── M2: Auth ────────────────────────────────────────────────────────────────
 
+// company and role are verified by the backend against the DB on every login.
 export const authAPI = {
   login: (email, password, company, role) =>
     request("/auth/login", {
@@ -63,25 +62,63 @@ export const onboardingAPI = {
       body: JSON.stringify(data),
     }),
 
+  uploadLogo: async (file) => {
+    const token = localStorage.getItem("token");
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/onboarding/logo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Logo upload failed (HTTP ${res.status})`);
+    }
+    return res.json();
+  },
+
   uploadDocument: async (docType, title, content, file) => {
     const token = localStorage.getItem("token");
     const formData = new FormData();
     formData.append("doc_type", docType);
     formData.append("title", title);
     if (content) formData.append("content", content);
-    if (file) formData.append("file", file);
+    if (file)    formData.append("file", file);
 
     const res = await fetch(`${API_BASE}/onboarding/documents`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-    if (!res.ok) throw new Error("Document upload failed");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
+    }
     return res.json();
   },
 
   triggerTraining: () =>
     request("/onboarding/train", { method: "POST" }),
+};
+
+// ─── Brand Kit ───────────────────────────────────────────────────────────────
+
+export const brandKitAPI = {
+  create: (data) =>
+    request("/brand-kit/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  get: () => request("/brand-kit/"),
+
+  update: (data) =>
+    request("/brand-kit/", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ─── M2: Users ───────────────────────────────────────────────────────────────
