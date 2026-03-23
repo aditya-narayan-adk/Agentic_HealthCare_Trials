@@ -32,6 +32,7 @@ from app.core.security import require_roles, get_current_user
 from app.services.ai.curator import CuratorService
 from app.services.ai.reviewer import ReviewerService
 from app.services.storage import file_storage
+from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 
 router = APIRouter(prefix="/advertisements", tags=["Advertisements"])
 
@@ -159,11 +160,15 @@ async def upload_protocol_document(
         filename=file.filename,
     )
 
+    disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+    content   = extract_text(disk_path)
+
     doc = AdvertisementDocument(
         company_id=user.company_id,
         advertisement_id=ad_id,
         doc_type=doc_type,
         title=title,
+        content=content,
         file_path=file_path,
         priority=10,
     )
@@ -234,7 +239,10 @@ async def generate_strategy(
     )
 
     curator = CuratorService(db, user.company_id)
-    strategy = await curator.generate_strategy(ad, all_docs)
+    try:
+        strategy = await curator.generate_strategy(ad, all_docs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     ad.strategy_json = strategy
     ad.status = AdStatus.STRATEGY_CREATED
@@ -329,8 +337,50 @@ async def publish_advertisement(
     if ad.status != AdStatus.APPROVED:
         raise HTTPException(status_code=400, detail="Advertisement must be approved before publishing")
 
-    # TODO: Integrate with Website Development Agent / Ad Agent
     ad.status = AdStatus.PUBLISHED
+    return ad
+
+
+# ─── Creative Generation ──────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/generate-creatives", response_model=AdvertisementOut)
+async def generate_creatives(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate ad copy + images.
+    - Claude writes headlines, body copy, CTAs, and image prompts per format.
+    - Amazon Titan Image Generator v2 produces the actual images.
+    - Images saved to outputs/<company_id>/<ad_id>/ and served via /outputs/.
+    - Output stored in ad.output_files as a list of creative dicts.
+
+    Available for approved and published campaigns.
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED):
+        raise HTTPException(
+            status_code=400,
+            detail="Creatives can only be generated for approved or published campaigns.",
+        )
+
+    from app.services.ai.creative import CreativeService
+    svc = CreativeService(company_id=user.company_id)
+    try:
+        creatives = await svc.generate_creatives(ad)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    ad.output_files = creatives
     return ad
 
 

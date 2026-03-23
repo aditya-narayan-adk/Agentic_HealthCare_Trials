@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(settings.STATIC_DIR, "logos"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "logos"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "docs"), exist_ok=True)
+    os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
     yield
     # Shutdown (cleanup if needed)
 
@@ -48,6 +49,10 @@ app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 # Upload file serving — documents and logos under ./uploads/
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+
+# Output file serving — generated creatives under ./outputs/
+os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=settings.OUTPUT_DIR), name="outputs")
 
 # ─── Register Route Modules ──────────────────────────────────────────────────
 

@@ -9,17 +9,31 @@ Used by Admin (My Company) and Ethics Reviewer (Document Updation).
 
 import os
 import mimetypes
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+import logging
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 
-from app.db.database import get_db
+from app.db.database import get_db, async_session_factory
 from app.models.models import User, UserRole, CompanyDocument
 from app.schemas.schemas import DocumentCreate, DocumentOut, DocumentUpdate
 from app.core.security import require_roles, get_current_user, decode_token
 from app.services.storage import file_storage
+from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
+
+logger = logging.getLogger(__name__)
+
+
+async def _background_train(company_id: str) -> None:
+    """Re-train curator + reviewer skills after a company doc is uploaded."""
+    async with async_session_factory() as db:
+        try:
+            from app.services.training.trainer import TrainingService
+            await TrainingService(db).train_company_skills(company_id)
+        except Exception as exc:
+            logger.error("Background training failed for company %s: %s", company_id, exc)
 
 router = APIRouter(prefix="/documents", tags=["Company Documents"])
 
@@ -101,14 +115,16 @@ async def upload_document(
     doc_type: str = Form(...),
     title: str = Form(...),
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ETHICS_REVIEWER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Create a document with a file attachment.
     Accepts PDF, DOCX, DOC, TXT, MD.
-    File is saved via the storage service — swap to Azure Blob by updating
-    app/services/storage.py only.
+    Text is extracted immediately and stored in the content field so the
+    Curator + Reviewer skills receive actual document text.
+    Re-trains AI skills in the background after saving.
     """
     if file.content_type not in ALLOWED_DOC_TYPES:
         raise HTTPException(
@@ -122,14 +138,20 @@ async def upload_document(
         filename=file.filename,
     )
 
+    disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+    content   = extract_text(disk_path)
+
     doc = CompanyDocument(
         company_id=user.company_id,
         doc_type=doc_type,
         title=title,
+        content=content,
         file_path=file_path,
     )
     db.add(doc)
     await db.flush()
+
+    background_tasks.add_task(_background_train, user.company_id)
     return doc
 
 

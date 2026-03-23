@@ -19,7 +19,9 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([adsAPI.list(), usersAPI.list()])
+    const role = JSON.parse(localStorage.getItem("user") || "{}").role;
+    const requests = [adsAPI.list(), role === "admin" ? usersAPI.list() : Promise.resolve([])];
+    Promise.all(requests)
       .then(([a, u]) => { setAds(a); setUsers(u); })
       .catch(console.error)
       .finally(() => setLoading(false));

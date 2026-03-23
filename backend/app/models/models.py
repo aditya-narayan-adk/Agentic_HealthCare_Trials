@@ -9,7 +9,13 @@ Each class maps to a table and is independently testable.
 
 import uuid
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _now():
+    # Return naive UTC datetime — DB columns are DateTime (no timezone).
+    # Using datetime.now(utc).replace(tzinfo=None) avoids the deprecation
+    # warning from utcnow() while keeping the value naive for SQLAlchemy.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from sqlalchemy import (
     Column, String, Text, DateTime, ForeignKey, Enum, Boolean,
     Integer, Float, JSON,
@@ -71,7 +77,7 @@ class Company(Base):
     name       = Column(String(256), nullable=False)
     logo_url   = Column(String(512), nullable=True)
     industry   = Column(String(128), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now)
     onboarded  = Column(Boolean, default=False)
 
     users              = relationship("User", back_populates="company", cascade="all, delete-orphan")
@@ -94,7 +100,7 @@ class User(Base):
     full_name  = Column(String(256), nullable=False)
     role       = Column(Enum(UserRole), nullable=False)
     is_active  = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now)
 
     company = relationship("Company", back_populates="users")
     reviews = relationship("Review", back_populates="reviewer", cascade="all, delete-orphan")
@@ -116,8 +122,8 @@ class CompanyDocument(Base):
     file_path  = Column(String(1024), nullable=True)
     priority   = Column(Integer, default=0)
     version    = Column(Integer, default=1)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
 
     company = relationship("Company", back_populates="documents")
 
@@ -137,9 +143,10 @@ class AdvertisementDocument(Base):
     advertisement_id = Column(String, ForeignKey("advertisements.id"), nullable=False)
     doc_type         = Column(String(64), nullable=False)   # plain string — campaign types are freeform
     title            = Column(String(512), nullable=False)
+    content          = Column(Text, nullable=True)          # extracted text from uploaded file
     file_path        = Column(String(1024), nullable=True)
     priority         = Column(Integer, default=10)          # higher than CompanyDocument default of 0
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=_now)
 
     advertisement = relationship("Advertisement", back_populates="protocol_docs")
 
@@ -166,8 +173,8 @@ class BrandKit(Base):
     donts           = Column(Text, nullable=True)
     preset_name     = Column(String(128), nullable=True)
     pdf_path        = Column(String(1024), nullable=True)
-    created_at      = Column(DateTime, default=datetime.utcnow)
-    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at      = Column(DateTime, default=_now)
+    updated_at      = Column(DateTime, default=_now, onupdate=_now)
 
     company = relationship("Company", back_populates="brand_kit")
 
@@ -183,8 +190,8 @@ class SkillConfig(Base):
     skill_md       = Column(Text, nullable=False)
     version        = Column(Integer, default=1)
     lessons_learnt = Column(Text, nullable=True)
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at     = Column(DateTime, default=_now)
+    updated_at     = Column(DateTime, default=_now, onupdate=_now)
 
     company = relationship("Company", back_populates="skills")
 
@@ -209,8 +216,8 @@ class Advertisement(Base):
     output_url      = Column(String(1024), nullable=True)
     output_files    = Column(JSON, nullable=True)
     bot_config      = Column(JSON, nullable=True)
-    created_at      = Column(DateTime, default=datetime.utcnow)
-    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at      = Column(DateTime, default=_now)
+    updated_at      = Column(DateTime, default=_now, onupdate=_now)
 
     company            = relationship("Company", back_populates="advertisements")
     protocol_docs      = relationship("AdvertisementDocument", back_populates="advertisement", cascade="all, delete-orphan")
@@ -233,7 +240,7 @@ class Review(Base):
     comments         = Column(Text, nullable=True)
     suggestions      = Column(JSON, nullable=True)
     edited_strategy  = Column(JSON, nullable=True)
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=_now)
 
     advertisement = relationship("Advertisement", back_populates="reviews")
     reviewer      = relationship("User", back_populates="reviews")
@@ -246,7 +253,7 @@ class AdAnalytics(Base):
 
     id               = Column(String, primary_key=True, default=_uuid)
     advertisement_id = Column(String, ForeignKey("advertisements.id"), nullable=False)
-    recorded_at      = Column(DateTime, default=datetime.utcnow)
+    recorded_at      = Column(DateTime, default=_now)
     user_retention   = Column(Float, nullable=True)
     click_rate       = Column(Float, nullable=True)
     follow_through   = Column(Float, nullable=True)
@@ -272,7 +279,7 @@ class OptimizerLog(Base):
     context          = Column(JSON, nullable=True)
     human_decision   = Column(String(32), nullable=True)
     applied_changes  = Column(JSON, nullable=True)
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=_now)
 
     advertisement = relationship("Advertisement", back_populates="optimizer_logs")
 
@@ -289,7 +296,7 @@ class ReinforcementLog(Base):
     raw_data         = Column(JSON, nullable=False)
     formalized_doc   = Column(Text, nullable=True)
     applied_to_skill = Column(Boolean, default=False)
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=_now)
 
     company       = relationship("Company", back_populates="reinforcement_logs")
     advertisement = relationship("Advertisement", back_populates="reinforcement_logs")

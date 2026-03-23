@@ -10,12 +10,17 @@ Reviews Curator-generated strategies and produces:
 """
 
 import json
+import os
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.models import Advertisement, SkillConfig, Review
 from app.core.bedrock import get_async_client, get_model, is_configured
+
+_SKILLS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "skills", "templates")
+)
 
 
 class ReviewerService:
@@ -103,9 +108,25 @@ Respond ONLY with the JSON object.
             )
         )
         skill = result.scalar_one_or_none()
-        if not skill:
-            raise ValueError(f"Skill '{skill_type}' not initialized. Run training first.")
-        return skill.skill_md
+        if skill:
+            return skill.skill_md
+
+        # Fall back to generic template so review works before training is run
+        template_path = os.path.join(_SKILLS_DIR, f"{skill_type}_template.md")
+        if os.path.exists(template_path):
+            import logging
+            logging.getLogger(__name__).warning(
+                "No trained '%s' skill for company %s — using generic template. "
+                "Run POST /api/onboarding/train to customise.",
+                skill_type, self.company_id,
+            )
+            with open(template_path, "r") as f:
+                return f.read()
+
+        raise ValueError(
+            f"Skill '{skill_type}' not found and template is missing. "
+            "Run POST /api/onboarding/train first."
+        )
 
     async def _call_claude(self, system_prompt: str, user_message: str) -> Dict[str, Any]:
         if not is_configured():

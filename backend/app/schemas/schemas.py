@@ -213,6 +213,7 @@ class AdvertisementOut(BaseModel):
     website_reqs: Optional[Dict[str, Any]] = None
     ad_details: Optional[Dict[str, Any]] = None
     output_url: Optional[str] = None
+    output_files: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
     updated_at: datetime
 

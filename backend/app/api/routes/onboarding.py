@@ -12,19 +12,31 @@ File storage note:
   To migrate to Azure Blob Storage, update storage.py only — no changes needed here.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+import logging
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
-from app.db.database import get_db
+from app.db.database import get_db, async_session_factory
 from app.models.models import Company, User, CompanyDocument, UserRole
 from app.schemas.schemas import (
     OnboardingRequest, OnboardingResponse, TrainingStatus, DocumentOut,
 )
 from app.core.security import hash_password, require_roles
 from app.services.storage import file_storage
+from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 from app.services.training.trainer import TrainingService
+
+logger = logging.getLogger(__name__)
+
+
+async def _background_train(company_id: str) -> None:
+    async with async_session_factory() as db:
+        try:
+            await TrainingService(db).train_company_skills(company_id)
+        except Exception as exc:
+            logger.error("Background training failed for company %s: %s", company_id, exc)
 
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
 
@@ -84,14 +96,15 @@ async def upload_document(
     title: str = Form(...),
     content: str = Form(None),
     file: UploadFile = File(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user: User = Depends(require_roles([UserRole.ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Upload company-specific documents during or after onboarding.
-    Supports: USP, Compliances, Policies, Marketing Goals, Ethical Guidelines, etc.
-    File is saved via the storage service — swap to Azure Blob by updating
-    app/services/storage.py only.
+    If a file is provided, its text is extracted and stored in content
+    so the AI skills receive the actual document text.
+    Re-trains AI skills in the background after saving.
     """
     file_path = None
     if file:
@@ -100,6 +113,9 @@ async def upload_document(
             subfolder=f"docs/{user.company_id}",
             filename=file.filename,
         )
+        if not content:
+            disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+            content   = extract_text(disk_path)
 
     doc = CompanyDocument(
         company_id=user.company_id,
@@ -111,6 +127,7 @@ async def upload_document(
     db.add(doc)
     await db.flush()
 
+    background_tasks.add_task(_background_train, user.company_id)
     return doc
 
 

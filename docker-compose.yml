@@ -2,26 +2,24 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8001:8000"        # 8001 on host — Docker Desktop already owns 8000
+    env_file: .env         # loads DATABASE_URL, SECRET_KEY, AWS keys, BEDROCK_MODEL, etc.
     volumes:
       - ./backend:/app
-      - ./skills:/app/skills
+      - ./skills:/skills   # trainer.py resolves 4 dirs up from /app/app/services/training → /skills
       - ./backend/uploads:/app/uploads
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-change-in-production}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "5173:5173"
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - /app/node_modules  # keeps container node_modules isolated from host
     environment:
-      - VITE_API_URL=http://localhost:8000/api
+      - VITE_API_URL=/api
+      - VITE_PROXY_TARGET=http://backend:8000   # Docker internal DNS — routes to backend container
     depends_on:
       - backend
     restart: unless-stopped

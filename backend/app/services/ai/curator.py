@@ -9,12 +9,17 @@ Calls Claude API to produce strategy JSON.
 """
 
 import json
+import os
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.models import Advertisement, CompanyDocument, SkillConfig, DocumentType
 from app.core.bedrock import get_async_client, get_model, is_configured
+
+_SKILLS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "skills", "templates")
+)
 
 
 class CuratorService:
@@ -48,7 +53,10 @@ class CuratorService:
         return strategy
 
     async def _load_skill(self, skill_type: str) -> str:
-        """Load the company-specific SKILL.md from DB."""
+        """
+        Load the company-specific SKILL.md from DB.
+        Falls back to the generic template if training hasn't been run yet.
+        """
         result = await self.db.execute(
             select(SkillConfig).where(
                 SkillConfig.company_id == self.company_id,
@@ -56,21 +64,41 @@ class CuratorService:
             )
         )
         skill = result.scalar_one_or_none()
-        if not skill:
-            raise ValueError(
-                f"Skill '{skill_type}' not found for company {self.company_id}. "
-                "Run training first via /onboarding/train"
+        if skill:
+            return skill.skill_md
+
+        # Fall back to the generic template so generation still works
+        # before training is run. Log a warning so it's visible in server logs.
+        template_path = os.path.join(_SKILLS_DIR, f"{skill_type}_template.md")
+        if os.path.exists(template_path):
+            import logging
+            logging.getLogger(__name__).warning(
+                "No trained '%s' skill for company %s — using generic template. "
+                "Run POST /api/onboarding/train to customise.",
+                skill_type, self.company_id,
             )
-        return skill.skill_md
+            with open(template_path, "r") as f:
+                return f.read()
+
+        raise ValueError(
+            f"Skill '{skill_type}' not found and template is missing. "
+            "Run POST /api/onboarding/train first."
+        )
 
     def _build_context(
         self,
         ad: Advertisement,
-        docs: List[CompanyDocument],
+        docs: list,
     ) -> str:
         """
         Build the user message with all relevant context.
-        Reference documents (from reinforcement learning) get higher priority.
+
+        Doc priority convention:
+          priority > 0  → campaign-specific protocol docs (AdvertisementDocument)
+          priority == 0 → company-level docs (CompanyDocument)
+            - doc_type == REFERENCE → lessons learned (highest importance)
+            - doc_type == INPUT     → input briefs
+            - everything else       → company context
         """
         sections = []
 
@@ -83,26 +111,39 @@ class CuratorService:
 - Target Audience: {json.dumps(ad.target_audience) if ad.target_audience else 'Not specified'}
 """)
 
-        # HIGH PRIORITY: Reference documents (lessons learned)
-        ref_docs = [d for d in docs if d.doc_type == DocumentType.REFERENCE]
+        # Campaign-specific protocol documents (priority > 0)
+        protocol_docs = [d for d in docs if d.priority > 0]
+        if protocol_docs:
+            sections.append("## Campaign Protocol Documents (HIGH PRIORITY — Campaign-Specific Context)")
+            for doc in protocol_docs:
+                doc_type_label = doc.doc_type if isinstance(doc.doc_type, str) else doc.doc_type.value
+                content = getattr(doc, 'content', None) or '[See attached file]'
+                sections.append(f"### [{doc_type_label}] {doc.title}\n{content}")
+
+        # Company-level: Reference / lessons learned
+        ref_docs = [d for d in docs if d.priority == 0 and d.doc_type == DocumentType.REFERENCE]
         if ref_docs:
             sections.append("## Reference Documents (HIGH PRIORITY — Lessons Learned)")
             for doc in ref_docs:
                 sections.append(f"### {doc.title}\n{doc.content or '[See file]'}")
 
-        # Input documents
-        input_docs = [d for d in docs if d.doc_type == DocumentType.INPUT]
+        # Company-level: Input briefs
+        input_docs = [d for d in docs if d.priority == 0 and d.doc_type == DocumentType.INPUT]
         if input_docs:
             sections.append("## Input Documents")
             for doc in input_docs:
                 sections.append(f"### {doc.title}\n{doc.content or '[See file]'}")
 
-        # Company context docs
-        other_docs = [d for d in docs if d.doc_type not in (DocumentType.REFERENCE, DocumentType.INPUT)]
+        # Company-level: Everything else (USP, compliance, policy, etc.)
+        other_docs = [
+            d for d in docs
+            if d.priority == 0 and d.doc_type not in (DocumentType.REFERENCE, DocumentType.INPUT)
+        ]
         if other_docs:
             sections.append("## Company Context Documents")
             for doc in other_docs:
-                sections.append(f"### [{doc.doc_type.value}] {doc.title}\n{doc.content or '[See file]'}")
+                doc_type_label = doc.doc_type if isinstance(doc.doc_type, str) else doc.doc_type.value
+                sections.append(f"### [{doc_type_label}] {doc.title}\n{doc.content or '[See file]'}")
 
         sections.append("""
 ## Instructions

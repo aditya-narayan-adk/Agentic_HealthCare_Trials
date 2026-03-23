@@ -6,7 +6,7 @@
  * All functions return parsed JSON or throw errors.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -247,6 +247,9 @@ export const adsAPI = {
 
   publish: (adId) =>
     request(`/advertisements/${adId}/publish`, { method: "POST" }),
+
+  generateCreatives: (adId) =>
+    request(`/advertisements/${adId}/generate-creatives`, { method: "POST" }),
 
   updateBotConfig: (adId, data) =>
     request(`/advertisements/${adId}/bot-config`, {

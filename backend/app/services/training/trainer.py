@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,7 +88,9 @@ class TrainingService:
 
             if is_configured():
                 client = get_client()
-                filled = call_trainer(client, trainer_skill, template, company_data)
+                filled = await asyncio.to_thread(
+                    call_trainer, client, trainer_skill, template, company_data
+                )
             else:
                 print(f"    No AI backend configured, storing template as-is")
                 filled = template

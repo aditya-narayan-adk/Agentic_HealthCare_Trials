@@ -38,7 +38,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db():
-    """Create all tables. Called once at startup.
+    """Create all tables and apply lightweight column migrations.
 
     Explicit model import ensures Base.metadata is fully populated
     regardless of which routes happen to be loaded first.
@@ -47,3 +47,11 @@ async def init_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add content column to advertisement_documents if it was created before
+        # this column was added to the model.
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE advertisement_documents "
+                "ADD COLUMN IF NOT EXISTS content TEXT;"
+            )
+        )

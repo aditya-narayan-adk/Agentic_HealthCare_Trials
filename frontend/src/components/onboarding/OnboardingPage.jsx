@@ -174,10 +174,8 @@ export default function OnboardingPage() {
         preset_name:     selectedPreset || null,
       });
 
-      // 8. TODO: Trigger AI skill initialization.
-      //    Skipped until skill templates are available on the backend.
-      //    Re-enable once /api/onboarding/train is fully implemented:
-      //    await onboardingAPI.triggerTraining();
+      // 8. Trigger AI skill initialization — generates customized Curator + Reviewer skills.
+      await onboardingAPI.triggerTraining();
 
       setTrainingDone(true);
     } catch (err) {
@@ -185,6 +183,8 @@ export default function OnboardingPage() {
       if (REGISTRATION_ERRORS[code]) {
         setError(REGISTRATION_ERRORS[code]);
         setShowSignIn(true);
+      } else if (!code || code === "Failed to fetch" || code === "NetworkError when attempting to fetch resource.") {
+        setError("Cannot connect to the server. Make sure the backend is running on port 8000.");
       } else {
         setError(code || "Setup failed. Please try again.");
       }
