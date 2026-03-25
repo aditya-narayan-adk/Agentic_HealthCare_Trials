@@ -20,7 +20,7 @@
  *   - Publish            — approved (publisher / admin)
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Component } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { PageWithSidebar, SectionCard, CampaignStatusBadge } from "../shared/Layout";
 import { adsAPI } from "../../services/api";
@@ -372,11 +372,12 @@ function KpiGrid({ kpis }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "8px" }}>
       {kpis.map((kpi, i) => {
-        // Split "Metric Name: description" if colon present
-        const colonIdx = kpi.indexOf(":");
+        // kpi may be a string "Label: description" or an object from the AI
+        const kpiStr = typeof kpi === "string" ? kpi : JSON.stringify(kpi);
+        const colonIdx = kpiStr.indexOf(":");
         const [label, desc] = colonIdx !== -1
-          ? [kpi.slice(0, colonIdx).trim(), kpi.slice(colonIdx + 1).trim()]
-          : [kpi, ""];
+          ? [kpiStr.slice(0, colonIdx).trim(), kpiStr.slice(colonIdx + 1).trim()]
+          : [kpiStr, ""];
         return (
           <div key={i} style={{
             display: "flex", alignItems: "flex-start", gap: "8px",
@@ -835,7 +836,9 @@ function ReviewCard({ review }) {
       )}
       {review.suggestions && (
         <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: "6px", fontStyle: "italic" }}>
-          Suggestions: {review.suggestions}
+          Suggestions: {typeof review.suggestions === "object"
+            ? JSON.stringify(review.suggestions, null, 2)
+            : review.suggestions}
         </p>
       )}
     </div>
@@ -990,8 +993,46 @@ function ActionButton({ onClick, loading, disabled, variant = "accent", icon, ch
   );
 }
 
+// ─── Error boundary ───────────────────────────────────────────────────────────
+class DetailErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <PageWithSidebar>
+          <div style={{ padding: "60px 0", textAlign: "center" }}>
+            <AlertCircle size={36} style={{ color: "#ef4444", margin: "0 auto 14px" }} />
+            <p style={{ color: "var(--color-input-text)", fontWeight: 700, fontSize: "1rem" }}>
+              Something went wrong rendering this campaign
+            </p>
+            <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.82rem", marginTop: "6px", maxWidth: "420px", margin: "8px auto 0" }}>
+              {this.state.error?.message}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="btn--ghost"
+              style={{ marginTop: "20px" }}
+            >
+              Reload page
+            </button>
+          </div>
+        </PageWithSidebar>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function CampaignDetailPage() {
+  return <DetailErrorBoundary><CampaignDetailPageInner /></DetailErrorBoundary>;
+}
+
+function CampaignDetailPageInner() {
   const { id }      = useParams();
   const navigate    = useNavigate();
 
@@ -1105,7 +1146,7 @@ export default function CampaignDetailPage() {
     setDeleteLoading(true);
     try {
       await adsAPI.delete(id);
-      navigate("/admin/dashboard");
+      navigate("/admin");
     } catch (err) {
       setShowDeleteConfirm(false);
       setDeleteLoading(false);
