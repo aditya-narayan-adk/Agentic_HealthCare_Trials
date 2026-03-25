@@ -22,6 +22,7 @@ import MyCompany from "./components/admin/MyCompany";
 
 // Reviewer
 import ReviewerDashboard from "./components/reviewer/ReviewerDashboard";
+import ReviewerCampaignDetail from "./components/reviewer/ReviewDetailPage";
 
 // Ethics
 import EthicsDashboard from "./components/ethics/EthicsDashboard";
@@ -57,6 +58,7 @@ function AppRoutes() {
       <Route path="/reviewer" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerDashboard /></ProtectedRoute>} />
       <Route path="/reviewer/queue" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerDashboard /></ProtectedRoute>} />
       <Route path="/reviewer/analytics" element={<ProtectedRoute allowedRoles={["reviewer"]}><AnalyticsPage /></ProtectedRoute>} />
+      <Route path="/reviewer/campaign/:id" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerCampaignDetail /></ProtectedRoute>} />
 
       {/* Ethics routes */}
       <Route path="/ethics" element={<ProtectedRoute allowedRoles={["ethics_reviewer"]}><EthicsDashboard /></ProtectedRoute>} />
