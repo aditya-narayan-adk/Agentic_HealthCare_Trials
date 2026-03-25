@@ -31,10 +31,11 @@ class CuratorService:
         self,
         advertisement: Advertisement,
         company_docs: List[CompanyDocument],
+        extra_instructions: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate a marketing strategy using the Curator skill.
-        
+
         Flow:
         1. Load the company's customized Curator SKILL.md
         2. Build context from input documents + reference documents
@@ -45,7 +46,7 @@ class CuratorService:
         skill_md = await self._load_skill("curator")
 
         # Step 2: Build document context
-        context = self._build_context(advertisement, company_docs)
+        context = self._build_context(advertisement, company_docs, extra_instructions=extra_instructions)
 
         # Step 3: Call Claude API
         strategy = await self._call_claude(skill_md, context)
@@ -61,9 +62,9 @@ class CuratorService:
             select(SkillConfig).where(
                 SkillConfig.company_id == self.company_id,
                 SkillConfig.skill_type == skill_type,
-            )
+            ).order_by(SkillConfig.version.desc())
         )
-        skill = result.scalar_one_or_none()
+        skill = result.scalars().first()
         if skill:
             return skill.skill_md
 
@@ -89,6 +90,7 @@ class CuratorService:
         self,
         ad: Advertisement,
         docs: list,
+        extra_instructions: Optional[str] = None,
     ) -> str:
         """
         Build the user message with all relevant context.
@@ -145,9 +147,12 @@ class CuratorService:
                 doc_type_label = doc.doc_type if isinstance(doc.doc_type, str) else doc.doc_type.value
                 sections.append(f"### [{doc_type_label}] {doc.title}\n{doc.content or '[See file]'}")
 
+        if extra_instructions:
+            sections.append(f"## Reviewer Instructions (MUST follow)\n{extra_instructions}")
+
         sections.append("""
 ## Instructions
-Based on all the above context, generate a comprehensive marketing strategy 
+Based on all the above context, generate a comprehensive marketing strategy
 as a JSON object following the format defined in your skill instructions.
 Respond ONLY with the JSON object, no additional text.
 """)

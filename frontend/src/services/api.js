@@ -272,6 +272,18 @@ export const adsAPI = {
     return `/api/advertisements/${adId}/website?download=true&token=${token}`;
   },
 
+  minorEditStrategy: (adId, data) =>
+    request(`/advertisements/${adId}/minor-edit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  rewriteStrategy: (adId, data) =>
+    request(`/advertisements/${adId}/rewrite-strategy`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   delete: (adId) =>
     request(`/advertisements/${adId}`, { method: "DELETE" }),
 };

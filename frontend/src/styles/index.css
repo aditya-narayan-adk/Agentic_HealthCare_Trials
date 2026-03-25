@@ -445,6 +445,174 @@ body {
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+
+
+  /* ── PUBLISHER BUTTONS ───────────────────────────────────────────────────── */
+
+  .btn--publish {
+    @apply btn px-4 py-2 text-xs font-semibold;
+    background-color: var(--color-btn-accent-bg);
+    color:            var(--color-btn-accent-text);
+  }
+  .btn--publish:hover:not(:disabled) { background-color: var(--color-btn-accent-hover); }
+
+  .btn--optimize {
+    @apply btn px-3 py-1.5 text-xs;
+    background-color: var(--color-accent-subtle);
+    color:            var(--color-accent-text);
+    border:           1px solid #a7f3d0;
+  }
+  .btn--optimize:hover:not(:disabled) { background-color: #d1fae5; }
+
+  .btn--approve {
+    @apply btn px-5 py-2.5;
+    background-color: var(--color-btn-accent-bg);
+    color:            var(--color-btn-accent-text);
+  }
+  .btn--approve:hover:not(:disabled) { background-color: var(--color-btn-accent-hover); }
+
+  .btn--revise {
+    @apply btn px-5 py-2.5;
+    background-color: #fffbeb;
+    color:            #b45309;
+    border:           1px solid #fde68a;
+  }
+  .btn--revise:hover:not(:disabled) { background-color: #fef3c7; }
+
+  .btn--inline-action--accent {
+    @apply btn px-3 py-1.5 text-xs;
+    background-color: var(--color-btn-accent-bg);
+    color:            var(--color-btn-accent-text);
+  }
+  .btn--inline-action--accent:hover:not(:disabled) { background-color: var(--color-btn-accent-hover); }
+
+  .btn--inline-action--ghost {
+    @apply btn px-3 py-1.5 text-xs;
+    background-color: var(--color-btn-ghost-bg);
+    color:            var(--color-btn-ghost-text);
+  }
+  .btn--inline-action--ghost:hover:not(:disabled) { background-color: var(--color-btn-ghost-hover); }
+
+  .btn--inline-action--success {
+    @apply btn px-3 py-1.5 text-xs;
+    background-color: var(--color-accent-subtle);
+    color:            var(--color-accent-text);
+    border:           1px solid #a7f3d0;
+  }
+  .btn--inline-action--success:hover:not(:disabled) { background-color: #d1fae5; }
+
+
+  /* ── CODE / JSON PREVIEW ─────────────────────────────────────────────────── */
+
+  .code-preview {
+    @apply rounded-lg p-4 text-xs font-mono overflow-x-auto;
+    background-color: #f8fafc;
+    border:           1px solid var(--color-card-border);
+    color:            #334155;
+    max-height:       200px;
+    overflow-y:       auto;
+  }
+  .code-preview--highlight {
+    @apply code-preview;
+    background-color: var(--color-accent-subtle);
+    border-color:     #a7f3d0;
+    color:            var(--color-accent-text);
+  }
+
+
+  /* ── PUBLISHER CAMPAIGN ROW ──────────────────────────────────────────────── */
+
+  .pub-campaign-row {
+    @apply flex items-center justify-between px-4 py-3.5 rounded-xl transition-colors;
+    border:           1px solid var(--color-card-border);
+    background-color: var(--color-card-bg);
+  }
+  .pub-campaign-row + .pub-campaign-row { @apply mt-2; }
+  .pub-campaign-row:hover { border-color: var(--color-input-border); background-color: var(--color-page-bg); }
+
+  .pub-campaign-row__dot {
+    @apply w-2 h-2 rounded-full shrink-0;
+    background-color: #fbbf24;
+  }
+  .pub-campaign-row__dot--live {
+    @apply pub-campaign-row__dot;
+    background-color: var(--color-accent);
+  }
+
+  .pub-campaign-detail {
+    @apply rounded-b-xl px-5 py-4 -mt-2 mb-2;
+    background-color: var(--color-page-bg);
+    border: 1px solid var(--color-input-border);
+    border-top: none;
+  }
+  .pub-campaign-detail__section-label {
+    @apply text-xs font-semibold uppercase tracking-wide mb-2;
+    color: var(--color-sidebar-text);
+  }
+
+
+  /* ── AD PREVIEW MODAL ────────────────────────────────────────────────────── */
+
+  .ad-preview-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center p-6;
+    background-color: rgba(3, 7, 18, 0.6);
+    backdrop-filter: blur(4px);
+  }
+
+  .ad-preview-modal {
+    @apply w-full max-w-4xl max-h-screen overflow-y-auto rounded-2xl shadow-2xl;
+    background-color: var(--color-card-bg);
+  }
+
+  .ad-preview-modal__header {
+    @apply flex items-center justify-between px-6 py-4 sticky top-0;
+    background-color: var(--color-card-bg);
+    border-bottom: 1px solid var(--color-card-border);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+  }
+
+  .ad-creative-card {
+    @apply rounded-xl overflow-hidden;
+    border: 1px solid var(--color-card-border);
+  }
+
+  .ad-creative-card__image-area {
+    @apply w-full flex items-center justify-center;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    min-height: 140px;
+  }
+
+  .ad-creative-card__body {
+    @apply p-4;
+  }
+
+  .ad-creative-card__format {
+    @apply inline-flex px-2 py-0.5 text-xs font-semibold rounded-md mb-3;
+    background-color: var(--color-accent-subtle);
+    color: var(--color-accent-text);
+  }
+
+  .ad-creative-card__headline {
+    @apply text-sm font-bold mb-1;
+    color: var(--color-input-text);
+  }
+
+  .ad-creative-card__body-text {
+    @apply text-xs leading-relaxed mb-3;
+    color: var(--color-sidebar-text);
+  }
+
+  .ad-creative-card__cta {
+    @apply inline-flex px-3 py-1.5 text-xs font-semibold rounded-lg;
+    background-color: var(--color-btn-accent-bg);
+    color: var(--color-btn-accent-text);
+  }
+
+  .ad-creative-card__prompt {
+    @apply text-xs mt-3 pt-3 italic;
+    color: var(--color-input-placeholder);
+    border-top: 1px solid var(--color-card-border);
+  }
 }
 
 

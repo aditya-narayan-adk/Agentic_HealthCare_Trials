@@ -20,7 +20,7 @@
  *   - Publish            — approved (publisher / admin)
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Component } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { PageWithSidebar, SectionCard, CampaignStatusBadge } from "../shared/Layout";
 import { adsAPI } from "../../services/api";
@@ -60,7 +60,7 @@ function StatusTimeline({ status }) {
               <div style={{
                 width: "28px", height: "28px", borderRadius: "50%",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                backgroundColor: done ? "var(--color-accent)" : active ? "rgba(16,185,129,0.15)" : "var(--color-card-bg)",
+                backgroundColor: done ? "var(--color-accent)" : active ? "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.15)" : "var(--color-card-bg)",
                 border: `2px solid ${done || active ? "var(--color-accent)" : "var(--color-card-border)"}`,
                 transition: "all 0.2s",
               }}>
@@ -110,168 +110,557 @@ function AdTypeChip({ type }) {
 }
 
 // ─── Strategy viewer ──────────────────────────────────────────────────────────
+
+/** Render any unknown value (string, array, object) as readable UI */
+function GenericValue({ value }) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return (
+      <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6 }}>
+        {String(value)}
+      </p>
+    );
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    // Array of primitives → pill tags
+    if (typeof value[0] !== "object") {
+      return (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
+          {value.map((item, i) => (
+            <span key={i} style={{
+              fontSize: "0.72rem", padding: "2px 8px", borderRadius: "999px",
+              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.08)",
+              color: "var(--color-accent)",
+              border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+            }}>
+              {String(item)}
+            </span>
+          ))}
+        </div>
+      );
+    }
+    // Array of objects → sub-cards
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
+        {value.map((item, i) => (
+          <div key={i} style={{
+            padding: "8px 10px", borderRadius: "8px",
+            border: "1px solid var(--color-card-border)",
+            backgroundColor: "var(--color-page-bg)",
+          }}>
+            {Object.entries(item).map(([k, v]) => (
+              <InfoRow key={k} label={k} value={
+                typeof v === "object" ? JSON.stringify(v) : String(v ?? "")
+              } />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  // Plain object → InfoRows
+  return (
+    <div>
+      {Object.entries(value).map(([k, v]) => (
+        <InfoRow key={k} label={k} value={
+          typeof v === "object" ? JSON.stringify(v) : String(v ?? "")
+        } />
+      ))}
+    </div>
+  );
+}
+
+/** Section divider label used across StrategyViewer */
+function SectionLabel({ children }) {
+  return (
+    <p style={{
+      fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase",
+      letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px",
+    }}>
+      {children}
+    </p>
+  );
+}
+
+// Keys handled by dedicated UI — excluded from the catch-all block
+const KNOWN_STRATEGY_KEYS = new Set([
+  "executive_summary", "target_audience", "messaging", "channels",
+  "content_plan", "kpis", "budget_breakdown", "budget_allocation",
+]);
+
+// ─── Strategy sub-components ──────────────────────────────────────────────────
+
+function SidebarBox({ icon, title, children }) {
+  return (
+    <div style={{
+      padding: "14px 16px", borderRadius: "10px",
+      border: "1px solid var(--color-card-border)",
+      backgroundColor: "var(--color-card-bg)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
+        <span style={{ color: "var(--color-accent)" }}>{icon}</span>
+        <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)" }}>
+          {title}
+        </p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ChannelRow({ ch, index }) {
+  // ch may be a plain string like "Meta/Instagram — Reels, Stories, and Feed Ads targeting…"
+  // or an object with platform/name/strategy keys
+  const isString = typeof ch === "string";
+  const [platform, detail] = isString
+    ? (() => {
+        const dashIdx = ch.indexOf(" — ");
+        return dashIdx !== -1
+          ? [ch.slice(0, dashIdx).trim(), ch.slice(dashIdx + 3).trim()]
+          : [ch, ""];
+      })()
+    : [ch.platform ?? ch.name ?? `Channel ${index + 1}`, ch.strategy ?? ""];
+
+  const extraEntries = isString
+    ? []
+    : Object.entries(ch).filter(([k]) => !["platform", "name", "strategy", "budget_allocation"].includes(k));
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: "12px",
+      padding: "10px 14px", borderRadius: "8px",
+      border: "1px solid var(--color-card-border)",
+      backgroundColor: "var(--color-card-bg)",
+    }}>
+      <div style={{
+        width: "30px", height: "30px", borderRadius: "6px", flexShrink: 0,
+        backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Target size={13} style={{ color: "var(--color-accent)" }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: "0.83rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: detail ? "3px" : 0 }}>
+          {platform}
+        </p>
+        {detail && (
+          <p style={{ fontSize: "0.76rem", color: "var(--color-sidebar-text)", lineHeight: 1.5 }}>
+            {detail}
+          </p>
+        )}
+        {extraEntries.map(([k, v]) => (
+          <InfoRow key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : String(v)} />
+        ))}
+      </div>
+      {!isString && ch.budget_allocation != null && (
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <p style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--color-accent)" }}>
+            {Math.round(ch.budget_allocation <= 1 ? ch.budget_allocation * 100 : ch.budget_allocation)}%
+          </p>
+          <p style={{ fontSize: "0.62rem", color: "var(--color-sidebar-text)" }}>budget</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContentPlanTable({ items }) {
+  // items may be an array of objects or a plain object keyed by index
+  const rows = Array.isArray(items)
+    ? items
+    : Object.values(items);
+
+  const [expandedRow, setExpandedRow] = useState(null);
+
+  if (!rows.length) return null;
+
+  // Detect columns from first row, prioritise known order
+  const PREFERRED_ORDER = ["channel", "format", "frequency", "example"];
+  const allKeys = Array.from(new Set(rows.flatMap(r => Object.keys(r))));
+  const cols = [
+    ...PREFERRED_ORDER.filter(k => allKeys.includes(k)),
+    ...allKeys.filter(k => !PREFERRED_ORDER.includes(k)),
+  ];
+  const mainCols = cols.filter(k => k !== "example");
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+        <thead>
+          <tr>
+            {mainCols.map(col => (
+              <th key={col} style={{
+                padding: "6px 12px", textAlign: "left",
+                fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
+                borderBottom: "1px solid var(--color-card-border)",
+                whiteSpace: "nowrap",
+              }}>
+                {col.replace(/_/g, " ")}
+              </th>
+            ))}
+            {cols.includes("example") && (
+              <th style={{
+                padding: "6px 12px", textAlign: "left",
+                fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
+                borderBottom: "1px solid var(--color-card-border)",
+                whiteSpace: "nowrap", width: "80px",
+              }}>
+                Example
+              </th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <React.Fragment key={i}>
+              <tr style={{ backgroundColor: i % 2 === 0 ? "transparent" : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.03)" }}>
+                {mainCols.map(col => (
+                  <td key={col} style={{
+                    padding: "8px 12px", color: "var(--color-input-text)",
+                    borderBottom: expandedRow === i ? "none" : "1px solid var(--color-card-border)",
+                    verticalAlign: "top", lineHeight: 1.5,
+                  }}>
+                    {String(row[col] ?? "")}
+                  </td>
+                ))}
+                {cols.includes("example") && (
+                  <td style={{
+                    padding: "8px 12px",
+                    borderBottom: expandedRow === i ? "none" : "1px solid var(--color-card-border)",
+                    verticalAlign: "top",
+                  }}>
+                    {row.example && (
+                      <button
+                        onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                        style={{
+                          background: "none", border: "none", cursor: "pointer", padding: 0,
+                          display: "inline-flex", alignItems: "center", gap: "4px",
+                          color: "var(--color-accent)", fontSize: "0.72rem", fontWeight: 600,
+                        }}
+                      >
+                        <Eye size={11} />
+                        {expandedRow === i ? "Hide" : "View"}
+                      </button>
+                    )}
+                  </td>
+                )}
+              </tr>
+              {expandedRow === i && row.example && (
+                <tr style={{ backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.04)" }}>
+                  <td colSpan={mainCols.length + 1} style={{
+                    padding: "10px 12px 12px",
+                    borderBottom: "1px solid var(--color-card-border)",
+                  }}>
+                    <p style={{ fontSize: "0.76rem", color: "var(--color-sidebar-text)", lineHeight: 1.6, fontStyle: "italic" }}>
+                      {row.example}
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function KpiGrid({ kpis }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "8px" }}>
+      {kpis.map((kpi, i) => {
+        // kpi may be a string "Label: description" or an object from the AI
+        const kpiStr = typeof kpi === "string" ? kpi : JSON.stringify(kpi);
+        const colonIdx = kpiStr.indexOf(":");
+        const [label, desc] = colonIdx !== -1
+          ? [kpiStr.slice(0, colonIdx).trim(), kpiStr.slice(colonIdx + 1).trim()]
+          : [kpiStr, ""];
+        return (
+          <div key={i} style={{
+            display: "flex", alignItems: "flex-start", gap: "8px",
+            padding: "8px 10px", borderRadius: "8px",
+            border: "1px solid var(--color-card-border)",
+            backgroundColor: "var(--color-card-bg)",
+          }}>
+            <Zap size={11} style={{ color: "var(--color-accent)", flexShrink: 0, marginTop: "3px" }} />
+            <div>
+              <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-input-text)", lineHeight: 1.4 }}>
+                {label}
+              </p>
+              {desc && (
+                <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", lineHeight: 1.4, marginTop: "2px" }}>
+                  {desc}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BudgetBar({ budgetData }) {
+  const entries = Object.entries(budgetData);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      {entries.map(([k, v]) => {
+        const raw = String(v).replace("%", "").trim();
+        const pct = isNaN(Number(raw)) ? null : Number(raw) <= 1 ? Math.round(Number(raw) * 100) : Math.round(Number(raw));
+        return (
+          <div key={k}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
+              <span style={{ fontSize: "0.74rem", color: "var(--color-input-text)", lineHeight: 1.3 }}>
+                {k.replace(/_/g, " ")}
+              </span>
+              <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--color-accent)", flexShrink: 0, marginLeft: "8px" }}>
+                {pct !== null ? `${pct}%` : String(v)}
+              </span>
+            </div>
+            {pct !== null && (
+              <div style={{ height: "4px", borderRadius: "999px", backgroundColor: "var(--color-card-border)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, backgroundColor: "var(--color-accent)", borderRadius: "999px" }} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StrategyViewer({ strategy }) {
   const [showRaw, setShowRaw] = useState(false);
   if (!strategy) return null;
 
   const {
     executive_summary, target_audience, messaging, channels,
-    content_plan, kpis, budget_breakdown,
+    content_plan, kpis, budget_breakdown, budget_allocation,
   } = strategy;
+
+  const budgetData = budget_breakdown ?? budget_allocation ?? null;
+
+  const extraEntries = Object.entries(strategy).filter(
+    ([k]) => !KNOWN_STRATEGY_KEYS.has(k)
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
 
-      {/* Executive Summary */}
+      {/* Executive Summary — full width */}
       {executive_summary && (
         <div style={{
           padding: "16px", borderRadius: "10px",
-          backgroundColor: "rgba(16,185,129,0.06)",
-          border: "1px solid rgba(16,185,129,0.2)",
+          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
+          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
         }}>
           <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-accent)", marginBottom: "8px" }}>
             Executive Summary
           </p>
-          <p style={{ fontSize: "0.9rem", lineHeight: 1.7, color: "var(--color-input-text)" }}>
+          <p style={{ fontSize: "0.88rem", lineHeight: 1.7, color: "var(--color-input-text)" }}>
             {executive_summary}
           </p>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "16px" }}>
+      {/* Two-column body: left main + right sidebar */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: "16px", alignItems: "start" }}>
 
-        {/* Target Audience */}
-        {target_audience && (
-          <StrategyCard icon={<Users size={14} />} title="Target Audience">
-            {target_audience.primary && <InfoRow label="Primary" value={target_audience.primary} />}
-            {target_audience.secondary && <InfoRow label="Secondary" value={target_audience.secondary} />}
-            {target_audience.demographics && typeof target_audience.demographics === "object" && (
-              Object.entries(target_audience.demographics).map(([k, v]) => (
-                <InfoRow key={k} label={k} value={String(v)} />
-              ))
-            )}
-          </StrategyCard>
-        )}
+        {/* ── LEFT MAIN COLUMN ── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", minWidth: 0 }}>
 
-        {/* Messaging */}
-        {messaging && (
-          <StrategyCard icon={<MessageCircle size={14} />} title="Messaging">
-            {messaging.core_message && <InfoRow label="Core message" value={messaging.core_message} />}
-            {messaging.tone && <InfoRow label="Tone" value={messaging.tone} />}
-            {messaging.cta && <InfoRow label="CTA" value={messaging.cta} />}
-            {messaging.key_phrases?.length > 0 && (
-              <div style={{ marginTop: "8px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                {messaging.key_phrases.map((p) => (
-                  <span key={p} style={{
-                    fontSize: "0.68rem", padding: "2px 7px", borderRadius: "999px",
-                    backgroundColor: "rgba(16,185,129,0.1)", color: "var(--color-accent)",
-                    border: "1px solid rgba(16,185,129,0.2)",
-                  }}>{p}</span>
+          {/* Channel Strategy */}
+          {channels?.length > 0 && (
+            <div style={{
+              borderRadius: "10px", border: "1px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+            }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Target size={13} style={{ color: "var(--color-accent)" }} />
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                  Channel Strategy
+                </p>
+              </div>
+              <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {channels.map((ch, i) => <ChannelRow key={i} ch={ch} index={i} />)}
+              </div>
+            </div>
+          )}
+
+          {/* Content Plan */}
+          {content_plan && (Array.isArray(content_plan) ? content_plan.length > 0 : Object.keys(content_plan).length > 0) && (
+            <div style={{
+              borderRadius: "10px", border: "1px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+            }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Layers size={13} style={{ color: "var(--color-accent)" }} />
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                  Content Plan
+                </p>
+              </div>
+              <ContentPlanTable items={content_plan} />
+            </div>
+          )}
+
+          {/* KPIs */}
+          {kpis?.length > 0 && (
+            <div style={{
+              borderRadius: "10px", border: "1px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+            }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: "6px" }}>
+                <BarChart2 size={13} style={{ color: "var(--color-accent)" }} />
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                  KPIs
+                </p>
+              </div>
+              <div style={{ padding: "12px 14px" }}>
+                <KpiGrid kpis={kpis} />
+              </div>
+            </div>
+          )}
+
+          {/* Catch-all extra keys */}
+          {extraEntries.length > 0 && (
+            <div style={{
+              borderRadius: "10px", border: "1px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+            }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--color-card-border)" }}>
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                  Additional Details
+                </p>
+              </div>
+              <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
+                {extraEntries.map(([key, val]) => (
+                  <div key={key} style={{
+                    padding: "10px 12px", borderRadius: "8px",
+                    border: "1px solid var(--color-card-border)",
+                    backgroundColor: "var(--color-page-bg)",
+                  }}>
+                    <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "capitalize", color: "var(--color-accent)", marginBottom: "6px" }}>
+                      {key.replace(/_/g, " ")}
+                    </p>
+                    <GenericValue value={val} />
+                  </div>
                 ))}
               </div>
-            )}
-          </StrategyCard>
-        )}
+            </div>
+          )}
 
-        {/* KPIs */}
-        {kpis?.length > 0 && (
-          <StrategyCard icon={<BarChart2 size={14} />} title="KPIs">
-            {kpis.map((kpi, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" }}>
-                <Zap size={11} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
-                <span style={{ fontSize: "0.82rem", color: "var(--color-input-text)" }}>{kpi}</span>
-              </div>
-            ))}
-          </StrategyCard>
-        )}
+        </div>
 
-        {/* Budget breakdown */}
-        {budget_breakdown && (
-          <StrategyCard icon={<DollarSign size={14} />} title="Budget Allocation">
-            {Object.entries(budget_breakdown).map(([k, v]) => (
-              <div key={k}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "2px" }}>
-                  <span style={{ fontSize: "0.78rem", color: "var(--color-input-text)", textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</span>
-                  <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-accent)" }}>{Math.round(v * 100)}%</span>
+        {/* ── RIGHT SIDEBAR COLUMN ── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+
+          {/* Target Audience */}
+          {target_audience && (
+            <SidebarBox icon={<Users size={13} />} title="Target Audience">
+              {target_audience.primary && (
+                <div style={{ marginBottom: "8px" }}>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-accent)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>Primary</p>
+                  <p style={{ fontSize: "0.76rem", color: "var(--color-input-text)", lineHeight: 1.5 }}>{target_audience.primary}</p>
                 </div>
-                <div style={{ height: "4px", borderRadius: "999px", backgroundColor: "var(--color-card-border)", overflow: "hidden", marginBottom: "8px" }}>
-                  <div style={{ height: "100%", width: `${v * 100}%`, backgroundColor: "var(--color-accent)", borderRadius: "999px" }} />
+              )}
+              {target_audience.secondary && (
+                <div style={{ marginBottom: "8px" }}>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>Secondary</p>
+                  <p style={{ fontSize: "0.76rem", color: "var(--color-input-text)", lineHeight: 1.5 }}>{target_audience.secondary}</p>
                 </div>
-              </div>
-            ))}
-          </StrategyCard>
-        )}
+              )}
+              {target_audience.demographics && typeof target_audience.demographics === "string" && (
+                <div>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>Demographics</p>
+                  <p style={{ fontSize: "0.74rem", color: "var(--color-sidebar-text)", lineHeight: 1.5 }}>{target_audience.demographics}</p>
+                </div>
+              )}
+              {target_audience.demographics && typeof target_audience.demographics === "object" && !Array.isArray(target_audience.demographics) && (
+                <div>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>Demographics</p>
+                  {Object.entries(target_audience.demographics).map(([k, v]) => (
+                    <InfoRow key={k} label={k} value={String(v)} />
+                  ))}
+                </div>
+              )}
+              {Object.entries(target_audience)
+                .filter(([k]) => !["primary", "secondary", "demographics"].includes(k))
+                .map(([k, v]) => (
+                  <InfoRow key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : String(v)} />
+                ))
+              }
+            </SidebarBox>
+          )}
 
+          {/* Messaging */}
+          {messaging && (
+            <SidebarBox icon={<MessageCircle size={13} />} title="Messaging">
+              {messaging.core_message && (
+                <div style={{ marginBottom: "8px" }}>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-accent)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>Core Message</p>
+                  <p style={{ fontSize: "0.76rem", color: "var(--color-input-text)", lineHeight: 1.5 }}>{messaging.core_message}</p>
+                </div>
+              )}
+              {messaging.tone && (
+                <div style={{ marginBottom: "8px" }}>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>Tone</p>
+                  <p style={{ fontSize: "0.74rem", color: "var(--color-sidebar-text)", lineHeight: 1.5 }}>{messaging.tone}</p>
+                </div>
+              )}
+              {messaging.key_differentiators?.length > 0 && (
+                <div style={{ marginBottom: "6px" }}>
+                  <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "5px" }}>Key Differentiators</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {messaging.key_differentiators.map((d, i) => (
+                      <div key={i} style={{ display: "flex", gap: "6px", alignItems: "flex-start" }}>
+                        <div style={{ width: "4px", height: "4px", borderRadius: "50%", backgroundColor: "var(--color-accent)", flexShrink: 0, marginTop: "6px" }} />
+                        <p style={{ fontSize: "0.72rem", color: "var(--color-input-text)", lineHeight: 1.4 }}>{d}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {messaging.key_phrases?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
+                  {messaging.key_phrases.map((p) => (
+                    <span key={p} style={{
+                      fontSize: "0.68rem", padding: "2px 7px", borderRadius: "999px",
+                      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                      color: "var(--color-accent)",
+                      border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+                    }}>{p}</span>
+                  ))}
+                </div>
+              )}
+              {messaging.cta && <InfoRow label="CTA" value={messaging.cta} />}
+              {Object.entries(messaging)
+                .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
+                .map(([k, v]) => (
+                  <div key={k} style={{ marginTop: "6px" }}>
+                    <p style={{ fontSize: "0.68rem", fontWeight: 600, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "3px" }}>
+                      {k.replace(/_/g, " ")}
+                    </p>
+                    <GenericValue value={v} />
+                  </div>
+                ))
+              }
+            </SidebarBox>
+          )}
+
+          {/* Budget Allocation */}
+          {budgetData && (
+            <SidebarBox icon={<DollarSign size={13} />} title="Budget Allocation">
+              <BudgetBar budgetData={budgetData} />
+            </SidebarBox>
+          )}
+
+        </div>
       </div>
 
-      {/* Channels */}
-      {channels?.length > 0 && (
-        <div>
-          <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-            Channel Strategy
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {channels.map((ch, i) => (
-              <div key={i} style={{
-                display: "flex", alignItems: "center", gap: "16px",
-                padding: "12px 16px", borderRadius: "10px",
-                border: "1px solid var(--color-card-border)",
-                backgroundColor: "var(--color-card-bg)",
-              }}>
-                <div style={{
-                  width: "36px", height: "36px", borderRadius: "8px", flexShrink: 0,
-                  backgroundColor: "rgba(16,185,129,0.1)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  <Target size={16} style={{ color: "var(--color-accent)" }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: "0.87rem", fontWeight: 600, color: "var(--color-input-text)" }}>{ch.platform}</p>
-                  {ch.strategy && <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>{ch.strategy}</p>}
-                </div>
-                {ch.budget_allocation != null && (
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <p style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-accent)" }}>
-                      {Math.round(ch.budget_allocation * 100)}%
-                    </p>
-                    <p style={{ fontSize: "0.65rem", color: "var(--color-sidebar-text)" }}>budget</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Content plan */}
-      {content_plan && (
-        <div>
-          <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-            Content Plan
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px" }}>
-            {Object.entries(content_plan).map(([key, val]) => (
-              <div key={key} style={{
-                padding: "12px 14px", borderRadius: "10px",
-                border: "1px solid var(--color-card-border)",
-                backgroundColor: "var(--color-card-bg)",
-              }}>
-                <p style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "capitalize", color: "var(--color-accent)", marginBottom: "6px" }}>
-                  {key.replace(/_/g, " ")}
-                </p>
-                {typeof val === "object"
-                  ? Object.entries(val).map(([k2, v2]) => (
-                    <InfoRow key={k2} label={k2} value={Array.isArray(v2) ? v2.join(", ") : String(v2)} />
-                  ))
-                  : <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)" }}>{String(val)}</p>
-                }
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Raw JSON toggle */}
+      {/* Raw JSON toggle — full width below grid */}
       <button
         onClick={() => setShowRaw((p) => !p)}
         style={{
@@ -300,23 +689,7 @@ function StrategyViewer({ strategy }) {
   );
 }
 
-function StrategyCard({ icon, title, children }) {
-  return (
-    <div style={{
-      padding: "14px 16px", borderRadius: "10px",
-      border: "1px solid var(--color-card-border)",
-      backgroundColor: "var(--color-card-bg)",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
-        <span style={{ color: "var(--color-accent)" }}>{icon}</span>
-        <p style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)" }}>
-          {title}
-        </p>
-      </div>
-      {children}
-    </div>
-  );
-}
+
 
 function InfoRow({ label, value }) {
   return (
@@ -463,7 +836,9 @@ function ReviewCard({ review }) {
       )}
       {review.suggestions && (
         <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: "6px", fontStyle: "italic" }}>
-          Suggestions: {review.suggestions}
+          Suggestions: {typeof review.suggestions === "object"
+            ? JSON.stringify(review.suggestions, null, 2)
+            : review.suggestions}
         </p>
       )}
     </div>
@@ -574,9 +949,9 @@ function CreativesViewer({ creatives }) {
                 <span style={{
                   fontSize: "0.75rem", fontWeight: 600,
                   padding: "4px 12px", borderRadius: "999px",
-                  backgroundColor: "rgba(16,185,129,0.12)",
+                  backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
                   color: "var(--color-accent)",
-                  border: "1px solid rgba(16,185,129,0.25)",
+                  border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)",
                 }}>
                   {c.cta}
                 </span>
@@ -618,8 +993,46 @@ function ActionButton({ onClick, loading, disabled, variant = "accent", icon, ch
   );
 }
 
+// ─── Error boundary ───────────────────────────────────────────────────────────
+class DetailErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <PageWithSidebar>
+          <div style={{ padding: "60px 0", textAlign: "center" }}>
+            <AlertCircle size={36} style={{ color: "#ef4444", margin: "0 auto 14px" }} />
+            <p style={{ color: "var(--color-input-text)", fontWeight: 700, fontSize: "1rem" }}>
+              Something went wrong rendering this campaign
+            </p>
+            <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.82rem", marginTop: "6px", maxWidth: "420px", margin: "8px auto 0" }}>
+              {this.state.error?.message}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="btn--ghost"
+              style={{ marginTop: "20px" }}
+            >
+              Reload page
+            </button>
+          </div>
+        </PageWithSidebar>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function CampaignDetailPage() {
+  return <DetailErrorBoundary><CampaignDetailPageInner /></DetailErrorBoundary>;
+}
+
+function CampaignDetailPageInner() {
   const { id }      = useParams();
   const navigate    = useNavigate();
 
@@ -733,7 +1146,7 @@ export default function CampaignDetailPage() {
     setDeleteLoading(true);
     try {
       await adsAPI.delete(id);
-      navigate("/admin/dashboard");
+      navigate("/admin");
     } catch (err) {
       setShowDeleteConfirm(false);
       setDeleteLoading(false);
@@ -918,7 +1331,7 @@ export default function CampaignDetailPage() {
                   display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px",
                   borderRadius: "8px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
                 }}>
-                  <div style={{ width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, backgroundColor: "rgba(16,185,129,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <FileText size={14} style={{ color: "var(--color-accent)" }} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -927,7 +1340,7 @@ export default function CampaignDetailPage() {
                       {doc.doc_type?.replace(/_/g, " ")}{doc.file_path && ` · ${doc.file_path.split("/").pop()}`}
                     </p>
                   </div>
-                  <span style={{ fontSize: "0.65rem", fontWeight: 600, padding: "2px 6px", borderRadius: "4px", backgroundColor: "rgba(16,185,129,0.1)", color: "var(--color-accent)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                  <span style={{ fontSize: "0.65rem", fontWeight: 600, padding: "2px 6px", borderRadius: "4px", backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)", color: "var(--color-accent)", border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)" }}>
                     Priority {doc.priority}
                   </span>
                 </div>
@@ -1019,27 +1432,54 @@ export default function CampaignDetailPage() {
             title="Reviewer Output"
             subtitle="Structured requirements extracted by the Reviewer AI"
           >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+
+              {/* Website Requirements */}
               {ad.website_reqs && (
                 <div>
-                  <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-accent)", marginBottom: "10px" }}>
-                    Website Requirements
+                  <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-accent)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Globe size={12} /> Website Requirements
                   </p>
-                  <pre style={{ fontSize: "0.72rem", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--color-input-text)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", backgroundColor: "var(--color-page-bg)", padding: "12px", borderRadius: "8px", border: "1px solid var(--color-card-border)" }}>
-                    {JSON.stringify(ad.website_reqs, null, 2)}
-                  </pre>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
+                    {Object.entries(ad.website_reqs).map(([key, val]) => (
+                      <div key={key} style={{
+                        padding: "12px 14px", borderRadius: "10px",
+                        border: "1px solid var(--color-card-border)",
+                        backgroundColor: "var(--color-card-bg)",
+                      }}>
+                        <p style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "capitalize", color: "var(--color-sidebar-text)", marginBottom: "6px" }}>
+                          {key.replace(/_/g, " ")}
+                        </p>
+                        <GenericValue value={val} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
+
+              {/* Ad Specifications */}
               {ad.ad_details && (
                 <div>
-                  <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-accent)", marginBottom: "10px" }}>
-                    Ad Specifications
+                  <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-accent)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Layers size={12} /> Ad Specifications
                   </p>
-                  <pre style={{ fontSize: "0.72rem", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--color-input-text)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", backgroundColor: "var(--color-page-bg)", padding: "12px", borderRadius: "8px", border: "1px solid var(--color-card-border)" }}>
-                    {JSON.stringify(ad.ad_details, null, 2)}
-                  </pre>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
+                    {Object.entries(ad.ad_details).map(([key, val]) => (
+                      <div key={key} style={{
+                        padding: "12px 14px", borderRadius: "10px",
+                        border: "1px solid var(--color-card-border)",
+                        backgroundColor: "var(--color-card-bg)",
+                      }}>
+                        <p style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "capitalize", color: "var(--color-sidebar-text)", marginBottom: "6px" }}>
+                          {key.replace(/_/g, " ")}
+                        </p>
+                        <GenericValue value={val} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
+
             </div>
           </SectionCard>
         )}

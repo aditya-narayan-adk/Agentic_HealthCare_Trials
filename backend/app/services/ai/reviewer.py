@@ -105,9 +105,9 @@ Respond ONLY with the JSON object.
             select(SkillConfig).where(
                 SkillConfig.company_id == self.company_id,
                 SkillConfig.skill_type == skill_type,
-            )
+            ).order_by(SkillConfig.version.desc())
         )
-        skill = result.scalar_one_or_none()
+        skill = result.scalars().first()
         if skill:
             return skill.skill_md
 

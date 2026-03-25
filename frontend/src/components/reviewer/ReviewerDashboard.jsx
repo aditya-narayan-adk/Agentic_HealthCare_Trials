@@ -9,41 +9,38 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, analyticsAPI } from "../../services/api";
-import { Eye, CheckCircle, XCircle, MessageSquare, BarChart3 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge,
+} from "../shared/Layout";
+import { adsAPI } from "../../services/api";
+import {
+  Eye, CheckCircle, BarChart3, ClipboardList,
+} from "lucide-react";
 
-export default function ReviewerDashboard() {
-  const [ads,        setAds]        = useState([]);
-  const [selected,   setSelected]   = useState(null);
-  const [reviewForm, setReviewForm] = useState({ comments: "", status: "approved" });
-  const [loading,    setLoading]    = useState(true);
+/* ══════════════════════════════════════════════
+   SHARED SUB-COMPONENTS
+══════════════════════════════════════════════ */
 
-  useEffect(() => {
-    adsAPI.list().then(setAds).catch(console.error).finally(() => setLoading(false));
-  }, []);
+function Tag({ children }) {
+  return (
+    <span style={{
+      display: "inline-block",
+      background: "var(--color-primary-light, #dcfce7)",
+      color: "var(--color-primary, #166534)",
+      borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 500,
+      marginRight: 4, marginBottom: 4,
+    }}>
+      {children}
+    </span>
+  );
+}
 
-  const reviewable = ads.filter((a) => ["under_review", "strategy_created"].includes(a.status));
-  const reviewed   = ads.filter((a) => ["approved", "published"].includes(a.status));
+/* ══════════════════════════════════════════════
+   PAGE: DASHBOARD (queue list)
+══════════════════════════════════════════════ */
 
-  const handleSubmitReview = async () => {
-    if (!selected) return;
-    try {
-      await adsAPI.createReview(selected.id, {
-        review_type: "strategy",
-        status:      reviewForm.status,
-        comments:    reviewForm.comments,
-      });
-      setAds((prev) => prev.map((a) =>
-        a.id === selected.id
-          ? { ...a, status: reviewForm.status === "approved" ? "approved" : "under_review" }
-          : a
-      ));
-      setSelected(null);
-      setReviewForm({ comments: "", status: "approved" });
-    } catch (err) { alert(err.message); }
-  };
-
+function DashboardPage({ ads, reviewable, reviewed, onReview }) {
   return (
     <PageWithSidebar>
       <div className="page-header">
@@ -55,113 +52,157 @@ export default function ReviewerDashboard() {
 
       {/* KPI row */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <MetricSummaryCard label="Pending Review"   value={reviewable.length} icon={Eye} />
-        <MetricSummaryCard label="Approved"         value={reviewed.length}   icon={CheckCircle} />
-        <MetricSummaryCard label="Total Campaigns"  value={ads.length}        icon={BarChart3} />
+        <MetricSummaryCard label="Pending Review"  value={reviewable.length} icon={Eye} />
+        <MetricSummaryCard label="Approved"        value={reviewed.length}   icon={CheckCircle} />
+        <MetricSummaryCard label="Total Campaigns" value={ads.length}        icon={BarChart3} />
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-
-        {/* Review Queue */}
-        <SectionCard title="Review Queue" subtitle={`${reviewable.length} campaigns awaiting review`}>
-          {reviewable.length === 0 ? (
-            <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-              No campaigns pending review
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {reviewable.map((ad) => (
-                <button
-                  key={ad.id}
-                  onClick={() => setSelected(ad)}
-                  className={selected?.id === ad.id ? "queue-item--selected" : "queue-item"}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium" style={{ color: "var(--color-input-text)" }}>{ad.title}</p>
-                    <CampaignStatusBadge status={ad.status} />
-                  </div>
-                  <p className="text-xs mt-1" style={{ color: "var(--color-sidebar-text)" }}>
-                    {ad.ad_type} · Budget: ${ad.budget || "N/A"}
-                  </p>
-                </button>
+      {/* Queue table */}
+      <SectionCard
+        title="Review Queue"
+        subtitle={`${reviewable.length} campaign${reviewable.length !== 1 ? "s" : ""} awaiting review`}
+      >
+        {reviewable.length === 0 ? (
+          <div className="empty-state">
+            <ClipboardList size={40} className="empty-state__icon" />
+            <p className="empty-state__text">No campaigns pending review</p>
+          </div>
+        ) : (
+          <div>
+            {/* Table header */}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 180px 90px 80px 110px",
+              padding: "8px 16px",
+              borderBottom: "1px solid var(--color-border, #e5e7eb)",
+            }}>
+              {["Campaign", "Platforms", "Budget", "Type", ""].map((h) => (
+                <span key={h} style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  color: "var(--color-sidebar-text)",
+                }}>
+                  {h}
+                </span>
               ))}
             </div>
-          )}
-        </SectionCard>
 
-        {/* Review Panel */}
-        <div>
-          {selected ? (
-            <SectionCard title={`Reviewing: ${selected.title}`}>
-              <div className="space-y-4">
-
-                {/* Strategy preview */}
-                <div className="code-preview">
-                  <p className="text-xs font-medium mb-2" style={{ color: "var(--color-sidebar-text)" }}>
-                    AI Generated Strategy
-                  </p>
-                  <pre>{JSON.stringify(selected.strategy_json, null, 2) || "No strategy generated yet"}</pre>
-                </div>
-
-                {/* Budget & platforms */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="info-tile">
-                    <p className="info-tile__label">Budget</p>
-                    <p className="info-tile__value">${selected.budget || "Not set"}</p>
-                  </div>
-                  <div className="info-tile">
-                    <p className="info-tile__label">Platforms</p>
-                    <p className="info-tile__value">{selected.platforms?.join(", ") || "None"}</p>
-                  </div>
-                </div>
-
-                {/* Review comment */}
+            {/* Rows */}
+            {reviewable.map((ad) => (
+              <div
+                key={ad.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 180px 90px 80px 110px",
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-card-bg, #f9fafb)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                {/* Title + date */}
                 <div>
-                  <label className="block text-sm font-medium mb-1" style={{ color: "var(--color-input-text)" }}>
-                    Your Review
-                  </label>
-                  <textarea
-                    value={reviewForm.comments}
-                    onChange={(e) => setReviewForm((p) => ({ ...p, comments: e.target.value }))}
-                    rows={4}
-                    placeholder="Comments, suggestions, budget adjustments…"
-                    className="field-textarea"
-                  />
+                  <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
+                  <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                    {new Date(ad.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </p>
                 </div>
+                {/* Platforms */}
+                <div style={{ display: "flex", flexWrap: "wrap" }}>
+                  {ad.platforms?.map((p) => <Tag key={p}>{p}</Tag>)}
+                </div>
+                {/* Budget */}
+                <p style={{ fontSize: 13, color: "var(--color-input-text)", fontWeight: 500 }}>
+                  ${ad.budget?.toLocaleString() || "N/A"}
+                </p>
+                {/* Type */}
+                <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", textTransform: "capitalize" }}>
+                  {ad.ad_type?.join(", ")}
+                </p>
+                {/* CTA */}
+                <button
+                  onClick={() => onReview(ad)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "7px 14px",
+                    background: "var(--color-primary, #166534)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Eye size={14} /> Review
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
-                {/* Verdict buttons */}
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => { setReviewForm((p) => ({ ...p, status: "approved" }));  handleSubmitReview(); }}
-                    className="btn--approve"
-                  >
-                    <CheckCircle size={16} /> Approve
-                  </button>
-                  <button
-                    onClick={() => { setReviewForm((p) => ({ ...p, status: "revision" })); handleSubmitReview(); }}
-                    className="btn--revise"
-                  >
-                    <MessageSquare size={16} /> Request Revision
-                  </button>
-                  <button
-                    onClick={() => { setReviewForm((p) => ({ ...p, status: "rejected" })); handleSubmitReview(); }}
-                    className="btn--reject"
-                  >
-                    <XCircle size={16} /> Reject
-                  </button>
+      {/* Reviewed campaigns */}
+      {reviewed.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <SectionCard title="Reviewed" subtitle={`${reviewed.length} completed`}>
+            {reviewed.map((ad) => (
+              <div
+                key={ad.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "12px 16px",
+                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                }}
+              >
+                <div>
+                  <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
+                  <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                    {ad.platforms?.join(" · ")}
+                  </p>
                 </div>
+                <CampaignStatusBadge status={ad.status} />
               </div>
-            </SectionCard>
-          ) : (
-            <SectionCard>
-              <div className="empty-state">
-                <Eye size={48} className="empty-state__icon" />
-                <p className="empty-state__text">Select a campaign from the queue to review</p>
-              </div>
-            </SectionCard>
-          )}
+            ))}
+          </SectionCard>
         </div>
-      </div>
+      )}
     </PageWithSidebar>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   ROOT — controls which page is active
+══════════════════════════════════════════════ */
+
+export default function ReviewerDashboard() {
+  const navigate          = useNavigate();
+  const [ads,     setAds]     = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    adsAPI.list().then(setAds).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  const reviewable = ads.filter((a) => ["under_review", "strategy_created"].includes(a.status));
+  const reviewed   = ads.filter((a) => ["approved", "published"].includes(a.status));
+
+  if (loading) return null;
+
+  return (
+    <DashboardPage
+      ads={ads}
+      reviewable={reviewable}
+      reviewed={reviewed}
+      onReview={(ad) => navigate(`/reviewer/campaign/${ad.id}`)}
+    />
   );
 }

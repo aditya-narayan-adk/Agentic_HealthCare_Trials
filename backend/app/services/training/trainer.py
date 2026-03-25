@@ -2,7 +2,8 @@ import asyncio
 import json
 import os
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import Company, CompanyDocument, SkillConfig
 from app.schemas.schemas import TrainingStatus
@@ -58,6 +59,11 @@ class TrainingService:
         if not company:
             raise ValueError(f"Company {company_id} not found")
 
+        # Acquire a PostgreSQL advisory lock scoped to this company so that
+        # concurrent training requests queue up rather than racing.
+        # hashtext() converts the company_id string to a stable int key.
+        await self.db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:cid))"), {"cid": company_id})
+
         # Load all company documents
         docs_result = await self.db.execute(
             select(CompanyDocument).where(CompanyDocument.company_id == company_id)
@@ -95,30 +101,33 @@ class TrainingService:
                 print(f"    No AI backend configured, storing template as-is")
                 filled = template
 
-            # Save to DB (create or update SkillConfig)
-            existing = await self.db.execute(
-                select(SkillConfig).where(
-                    SkillConfig.company_id == company_id,
-                    SkillConfig.skill_type == skill_name,
-                )
-            )
-            skill = existing.scalar_one_or_none()
-
-            if skill:
-                skill.skill_md = filled
-                skill.version += 1
-            else:
-                skill = SkillConfig(
+            # Upsert: insert if not exists, update skill_md + bump version if exists.
+            # ON CONFLICT requires a unique constraint on (company_id, skill_type).
+            # If that constraint is missing, add it:
+            #   ALTER TABLE skill_configs ADD CONSTRAINT uq_skill_company_type
+            #     UNIQUE (company_id, skill_type);
+            stmt = (
+                pg_insert(SkillConfig)
+                .values(
                     company_id=company_id,
                     skill_type=skill_name,
                     skill_md=filled,
                     version=1,
                 )
-                self.db.add(skill)
+                .on_conflict_do_update(
+                    index_elements=["company_id", "skill_type"],
+                    set_={
+                        "skill_md": filled,
+                        "version":  SkillConfig.version + 1,
+                    },
+                )
+                .returning(SkillConfig.version)
+            )
+            row = await self.db.execute(stmt)
+            version = row.scalar_one()
 
-            await self.db.flush()
-            skill_versions[skill_name] = skill.version
-            print(f"  ✅  {skill_name} skill saved to DB (v{skill.version})")
+            skill_versions[skill_name] = version
+            print(f"  ✅  {skill_name} skill saved to DB (v{version})")
 
         await self.db.commit()
 
