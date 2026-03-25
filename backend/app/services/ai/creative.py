@@ -45,6 +45,7 @@ Rules for image prompts:
 - Absolutely NO text, words, letters, logos, or watermarks in the image
 - Describe composition, lighting, mood, subject, and background in detail
 - Incorporate the brand visual style from the strategy if available
+- IMPORTANT: image_prompt must be under 512 characters total
 
 Respond ONLY with valid JSON (no markdown fences, no extra text):
 {
@@ -167,10 +168,11 @@ If no formats are defined, generate three formats: 1080x1080 Static, 1080x1920 S
                 aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             )
 
+            safe_prompt = (prompt or "Professional advertisement, modern minimal design, clean composition")[:512]
             body = json.dumps({
                 "taskType": "TEXT_IMAGE",
                 "textToImageParams": {
-                    "text": prompt or "Professional advertisement, modern minimal design, clean composition",
+                    "text": safe_prompt,
                     "negativeText": "text, words, letters, watermark, blurry, distorted, low quality, ugly",
                 },
                 "imageGenerationConfig": {
