@@ -315,3 +315,14 @@ class BotConfigUpdate(BaseModel):
     voice: Optional[str] = None
     language: Optional[str] = None
     additional_params: Optional[Dict[str, Any]] = None
+
+
+# ─── Reviewer Action Schemas ──────────────────────────────────────────────────
+
+class MinorEditRequest(BaseModel):
+    field: str        # dot-path e.g. "executive_summary" or "messaging.core_message"
+    old_value: str
+    new_value: str
+
+class RewriteStrategyRequest(BaseModel):
+    instructions: str

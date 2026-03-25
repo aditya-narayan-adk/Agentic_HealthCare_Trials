@@ -252,10 +252,18 @@ function VerdictPanel({ adId, onSubmitted }) {
   const [error, setError]     = useState(null);
 
   const submit = async () => {
-    if (!form.comments.trim()) { setError("Comments are required."); return; }
+    if (form.status !== "approved" && !form.comments.trim()) {
+      setError("Comments are required when requesting revision or rejecting.");
+      return;
+    }
     setLoading(true); setError(null);
     try {
-      await adsAPI.createReview(adId, form);
+      const payload = {
+        ...form,
+        comments: form.comments.trim() || "Approved.",
+        suggestions: form.suggestions.trim() ? { text: form.suggestions.trim() } : null,
+      };
+      await adsAPI.createReview(adId, payload);
       onSubmitted();
     } catch (err) {
       setError(err.message || "Failed to submit review.");
@@ -294,7 +302,7 @@ function VerdictPanel({ adId, onSubmitted }) {
       </div>
 
       <div>
-        <label style={labelStyle}>Comments *</label>
+        <label style={labelStyle}>Comments {form.status !== "approved" ? "*" : "(optional)"}</label>
         <textarea style={textStyle} placeholder="Provide your review comments..." value={form.comments} onChange={(e) => setForm((p) => ({ ...p, comments: e.target.value }))} />
       </div>
       <div>
@@ -635,7 +643,7 @@ function ReviewCard({ review }) {
         )}
       </div>
       {review.comments && <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6 }}>{review.comments}</p>}
-      {review.suggestions && <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 6, fontStyle: "italic" }}>Suggestions: {review.suggestions}</p>}
+      {review.suggestions?.text && <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 6, fontStyle: "italic" }}>Suggestions: {review.suggestions.text}</p>}
     </div>
   );
 }

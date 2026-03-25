@@ -26,7 +26,7 @@ from app.models.models import (
 from app.schemas.schemas import (
     AdvertisementCreate, AdvertisementOut, AdvertisementUpdate,
     ReviewCreate, ReviewOut, OptimizerDecision, BotConfigUpdate,
-    AdvertisementDocumentOut,
+    AdvertisementDocumentOut, MinorEditRequest, RewriteStrategyRequest,
 )
 from app.core.security import require_roles, get_current_user
 from app.services.ai.curator import CuratorService
@@ -498,6 +498,121 @@ async def generate_website(
         raise HTTPException(status_code=500, detail=str(exc))
 
     ad.output_url = url
+    return ad
+
+
+# ─── Reviewer: Minor Edit ─────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/minor-edit", response_model=AdvertisementOut)
+async def minor_edit_strategy(
+    ad_id: str,
+    body: MinorEditRequest,
+    user: User = Depends(require_roles([UserRole.REVIEWER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Patch a single field in strategy_json and record an audit-trail system review.
+    field is a dot-path, e.g. "executive_summary" or "messaging.core_message".
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    if not ad.strategy_json:
+        raise HTTPException(status_code=400, detail="No strategy to edit")
+
+    # Apply the dot-path patch
+    strategy = dict(ad.strategy_json)
+    keys = body.field.split(".")
+    node = strategy
+    for key in keys[:-1]:
+        if key not in node or not isinstance(node[key], dict):
+            node[key] = {}
+        node = node[key]
+    node[keys[-1]] = body.new_value
+    ad.strategy_json = strategy
+
+    # Audit review
+    audit = Review(
+        advertisement_id=ad_id,
+        reviewer_id=user.id,
+        review_type="system",
+        status="pending",
+        comments=f"{body.field} changed from '{body.old_value[:120]}' to '{body.new_value[:120]}'",
+    )
+    db.add(audit)
+    await db.flush()
+    return ad
+
+
+# ─── Reviewer: AI Re-Strategy ─────────────────────────────────────────────────
+
+@router.post("/{ad_id}/rewrite-strategy", response_model=AdvertisementOut)
+async def rewrite_strategy(
+    ad_id: str,
+    body: RewriteStrategyRequest,
+    user: User = Depends(require_roles([UserRole.REVIEWER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Trigger the Curator to rewrite the entire strategy using reviewer instructions.
+    Appends a system audit review recording the action.
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    # Load docs (same as generate-strategy)
+    company_docs_result = await db.execute(
+        select(CompanyDocument).where(CompanyDocument.company_id == user.company_id)
+    )
+    company_docs = company_docs_result.scalars().all()
+
+    protocol_docs_result = await db.execute(
+        select(AdvertisementDocument).where(
+            AdvertisementDocument.advertisement_id == ad_id,
+            AdvertisementDocument.company_id == user.company_id,
+        )
+    )
+    protocol_docs = protocol_docs_result.scalars().all()
+
+    all_docs = sorted(
+        list(company_docs) + list(protocol_docs),
+        key=lambda d: d.priority,
+        reverse=True,
+    )
+
+    curator = CuratorService(db, user.company_id)
+    try:
+        strategy = await curator.generate_strategy(ad, all_docs, extra_instructions=body.instructions)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    ad.strategy_json = strategy
+    ad.status = AdStatus.STRATEGY_CREATED
+
+    # Audit review
+    preview = body.instructions[:120] + ("…" if len(body.instructions) > 120 else "")
+    audit = Review(
+        advertisement_id=ad_id,
+        reviewer_id=user.id,
+        review_type="system",
+        status="pending",
+        comments=f"AI Re-Strategy triggered by reviewer: '{preview}'",
+    )
+    db.add(audit)
+    await db.flush()
     return ad
 
 
