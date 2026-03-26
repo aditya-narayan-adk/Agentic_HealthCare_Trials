@@ -55,3 +55,18 @@ async def init_db():
                 "ADD COLUMN IF NOT EXISTS content TEXT;"
             )
         )
+        # Add campaign_category and questionnaire columns to advertisements
+        # (added for recruitment/survey/hiring/clinical-trial questionnaire feature).
+        _sql = __import__("sqlalchemy").text
+        await conn.execute(_sql(
+            "ALTER TABLE advertisements "
+            "ADD COLUMN IF NOT EXISTS campaign_category VARCHAR(64);"
+        ))
+        await conn.execute(_sql(
+            "ALTER TABLE advertisements "
+            "ADD COLUMN IF NOT EXISTS questionnaire JSON;"
+        ))
+        await conn.execute(_sql(
+            "ALTER TABLE advertisements "
+            "ADD COLUMN IF NOT EXISTS duration VARCHAR(128);"
+        ))

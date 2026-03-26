@@ -195,10 +195,13 @@ class BrandKitUpdate(BaseModel):
 
 # ─── Advertisement Schemas ────────────────────────────────────────────────────
 
+QUESTIONNAIRE_CAMPAIGN_CATEGORIES = {"recruitment", "survey", "hiring", "clinical_trial", "research"}
+
 class AdvertisementCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=512)
     ad_type: List[AdTypeEnum]
     budget: Optional[float] = None
+    duration: Optional[str] = None
     platforms: Optional[List[str]] = None
     target_audience: Optional[Dict[str, Any]] = None
 
@@ -206,8 +209,10 @@ class AdvertisementOut(BaseModel):
     id: str
     title: str
     ad_type: List[str]
+    campaign_category: Optional[str] = None
     status: AdStatusEnum
     budget: Optional[float] = None
+    duration: Optional[str] = None
     platforms: Optional[List[str]] = None
     strategy_json: Optional[Dict[str, Any]] = None
     review_notes: Optional[str] = None
@@ -215,6 +220,7 @@ class AdvertisementOut(BaseModel):
     ad_details: Optional[Dict[str, Any]] = None
     output_url: Optional[str] = None
     output_files: Optional[List[Dict[str, Any]]] = None
+    questionnaire: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -227,6 +233,9 @@ class AdvertisementUpdate(BaseModel):
     platforms: Optional[List[str]] = None
     target_audience: Optional[Dict[str, Any]] = None
     status: Optional[AdStatusEnum] = None
+
+class QuestionnaireUpdate(BaseModel):
+    questionnaire: Dict[str, Any]
 
 
 # ─── Review Schemas ───────────────────────────────────────────────────────────

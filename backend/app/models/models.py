@@ -201,23 +201,26 @@ class SkillConfig(Base):
 class Advertisement(Base):
     __tablename__ = "advertisements"
 
-    id              = Column(String, primary_key=True, default=_uuid)
-    company_id      = Column(String, ForeignKey("companies.id"), nullable=False)
-    title           = Column(String(512), nullable=False)
-    ad_type         = Column(JSON, nullable=False)
-    status          = Column(Enum(AdStatus), default=AdStatus.DRAFT)
-    budget          = Column(Float, nullable=True)
-    platforms       = Column(JSON, nullable=True)
-    target_audience = Column(JSON, nullable=True)
-    strategy_json   = Column(JSON, nullable=True)
-    review_notes    = Column(Text, nullable=True)
-    website_reqs    = Column(JSON, nullable=True)
-    ad_details      = Column(JSON, nullable=True)
-    output_url      = Column(String(1024), nullable=True)
-    output_files    = Column(JSON, nullable=True)
-    bot_config      = Column(JSON, nullable=True)
-    created_at      = Column(DateTime, default=_now)
-    updated_at      = Column(DateTime, default=_now, onupdate=_now)
+    id                = Column(String, primary_key=True, default=_uuid)
+    company_id        = Column(String, ForeignKey("companies.id"), nullable=False)
+    title             = Column(String(512), nullable=False)
+    ad_type           = Column(JSON, nullable=False)
+    campaign_category = Column(String(64), nullable=True)   # inferred by AI from title/context
+    duration          = Column(String(128), nullable=True)  # e.g. "4 weeks", "3 months"
+    status            = Column(Enum(AdStatus), default=AdStatus.DRAFT)
+    budget            = Column(Float, nullable=True)
+    platforms         = Column(JSON, nullable=True)
+    target_audience   = Column(JSON, nullable=True)
+    strategy_json     = Column(JSON, nullable=True)
+    review_notes      = Column(Text, nullable=True)
+    website_reqs      = Column(JSON, nullable=True)
+    ad_details        = Column(JSON, nullable=True)
+    output_url        = Column(String(1024), nullable=True)
+    output_files      = Column(JSON, nullable=True)
+    bot_config        = Column(JSON, nullable=True)
+    questionnaire     = Column(JSON, nullable=True)         # {questions: [{id, text, type, options, required}]}
+    created_at        = Column(DateTime, default=_now)
+    updated_at        = Column(DateTime, default=_now, onupdate=_now)
 
     company            = relationship("Company", back_populates="advertisements")
     protocol_docs      = relationship("AdvertisementDocument", back_populates="advertisement", cascade="all, delete-orphan")

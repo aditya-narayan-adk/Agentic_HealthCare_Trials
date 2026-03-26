@@ -200,6 +200,7 @@ export default function CampaignCreator() {
     title: "",
     ad_types: [],
     budget: "",
+    duration: "",
     platforms: [],
     target_audience: { age_range: "", gender: "", interests: "" },
     protocol_docs: [],
@@ -246,6 +247,7 @@ export default function CampaignCreator() {
         title:           form.title,
         ad_type:         form.ad_types,
         budget:          form.budget ? parseFloat(form.budget) : null,
+        duration:        form.duration.trim() || null,
         platforms:       form.platforms,
         target_audience: form.target_audience,
       });
@@ -363,21 +365,36 @@ export default function CampaignCreator() {
                 <input
                   value={form.title}
                   onChange={(e) => update("title", e.target.value)}
-                  placeholder="e.g. Q2 Product Launch"
+                  placeholder="e.g. Q2 Product Launch, Hiring Drive 2025"
                   className="field-input"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: "var(--color-input-text)" }}>
-                  Budget ($)
-                </label>
-                <input
-                  type="number"
-                  value={form.budget}
-                  onChange={(e) => update("budget", e.target.value)}
-                  placeholder="10000"
-                  className="field-input"
-                />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div>
+                  <label className="block text-sm font-medium mb-1" style={{ color: "var(--color-input-text)" }}>
+                    Budget ($)
+                  </label>
+                  <input
+                    type="number"
+                    value={form.budget}
+                    onChange={(e) => update("budget", e.target.value)}
+                    placeholder="10000"
+                    className="field-input"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1" style={{ color: "var(--color-input-text)" }}>
+                    Duration <span style={{ fontWeight: 400, color: "var(--color-sidebar-text)" }}>(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={form.duration}
+                    onChange={(e) => update("duration", e.target.value)}
+                    placeholder="e.g. 4 weeks, 3 months"
+                    className="field-input"
+                  />
+                </div>
               </div>
             </div>
           </SectionCard>

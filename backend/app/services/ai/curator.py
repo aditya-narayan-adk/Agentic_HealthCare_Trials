@@ -179,6 +179,82 @@ Respond ONLY with the JSON object, no additional text.
         except json.JSONDecodeError:
             return {"raw_response": text, "parse_error": True}
 
+    async def generate_questionnaire(
+        self,
+        advertisement: Advertisement,
+        docs: list,
+    ) -> Dict[str, Any]:
+        """
+        Generate an MCQ eligibility/screening questionnaire using Claude.
+        Returns {"questions": [{id, text, type, options, required}]}
+        """
+        if not is_configured():
+            return self._mock_questionnaire(advertisement.title)
+
+        # Build focused context
+        doc_titles = ", ".join(d.title for d in docs if d.priority > 0) or "none"
+        strategy_summary = ""
+        if advertisement.strategy_json:
+            es = advertisement.strategy_json.get("executive_summary", "")
+            if es:
+                strategy_summary = f"\nCampaign Strategy Summary: {es[:400]}"
+
+        doc_contents = []
+        for d in docs:
+            if d.priority > 0:
+                content = getattr(d, "content", None) or ""
+                if content:
+                    doc_contents.append(f"[{d.title}]: {content[:600]}")
+        doc_block = "\n".join(doc_contents) if doc_contents else "No protocol documents provided."
+
+        user_message = f"""You are generating a screening/eligibility questionnaire for the following campaign.
+
+Campaign Title: {advertisement.title}
+Ad Types: {", ".join(advertisement.ad_type)}
+Protocol Documents: {doc_titles}
+
+{doc_block}{strategy_summary}
+
+Generate 6–8 multiple-choice questions that screen or assess respondents for eligibility, suitability, or relevant experience for this campaign. Each question must have exactly 4 answer options. Questions should be specific to the campaign context — not generic.
+
+Return ONLY a JSON object in this exact format:
+{{
+  "questions": [
+    {{
+      "id": "q1",
+      "text": "Question text here?",
+      "type": "multiple_choice",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "required": true
+    }}
+  ]
+}}"""
+
+        client = get_async_client()
+        response = await client.messages.create(
+            model=get_model(),
+            max_tokens=2048,
+            system="You are an expert at creating screening questionnaires for campaigns. Always respond with valid JSON only.",
+            messages=[{"role": "user", "content": user_message}],
+        )
+        text = response.content[0].text
+        try:
+            clean = text.strip().removeprefix("```json").removesuffix("```").strip()
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            return {"questions": [], "parse_error": True}
+
+    def _mock_questionnaire(self, title: str) -> Dict[str, Any]:
+        """Dev mock questionnaire when no API key is configured."""
+        return {
+            "questions": [
+                {"id": "q1", "text": f"What is your primary reason for interest in '{title}'?", "type": "multiple_choice", "options": ["Career growth", "Research interest", "Financial benefit", "Personal need"], "required": True},
+                {"id": "q2", "text": "What is your highest level of relevant experience?", "type": "multiple_choice", "options": ["No experience", "1–2 years", "3–5 years", "5+ years"], "required": True},
+                {"id": "q3", "text": "Are you currently available for the full duration of this campaign?", "type": "multiple_choice", "options": ["Yes, fully available", "Partially available", "Available after 1 month", "Not sure yet"], "required": True},
+                {"id": "q4", "text": "How did you hear about this campaign?", "type": "multiple_choice", "options": ["Online advertisement", "Referral", "Social media", "Direct outreach"], "required": False},
+            ]
+        }
+
     def _mock_strategy(self) -> Dict[str, Any]:
         """Development mock — returned when no API key is configured."""
         return {

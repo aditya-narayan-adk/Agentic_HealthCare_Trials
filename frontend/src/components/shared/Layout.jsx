@@ -36,6 +36,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import {
   LayoutDashboard, Users, FileText, BarChart3,
   LogOut, Shield, Eye, Megaphone, Globe, Bot,
+  Rocket, Share2,
 } from "lucide-react";
 
 // ─── RoleGuardedRoute ─────────────────────────────────────────────────────────
@@ -76,9 +77,8 @@ const SIDEBAR_LINKS_BY_ROLE = {
     { label: "Analytics",       icon: BarChart3,        path: "/admin/analytics" },
   ],
   reviewer: [
-    { label: "Dashboard",    icon: LayoutDashboard, path: "/reviewer" },
-    { label: "Review Queue", icon: Eye,             path: "/reviewer/queue" },
-    { label: "Analytics",    icon: BarChart3,       path: "/reviewer/analytics" },
+    { label: "Dashboard", icon: LayoutDashboard, path: "/reviewer" },
+    { label: "Analytics", icon: BarChart3,       path: "/reviewer/analytics" },
   ],
   ethics_reviewer: [
     { label: "Dashboard",     icon: LayoutDashboard, path: "/ethics" },
@@ -86,11 +86,10 @@ const SIDEBAR_LINKS_BY_ROLE = {
     { label: "Documents",     icon: FileText,        path: "/ethics/documents" },
   ],
   publisher: [
-    { label: "Dashboard",       icon: LayoutDashboard, path: "/publisher" },
-    { label: "Ad Creator",      icon: Megaphone,       path: "/publisher/ads" },
-    { label: "Website Creator", icon: Globe,           path: "/publisher/website" },
-    { label: "Bot Config",      icon: Bot,             path: "/publisher/bots" },
-    { label: "Analytics",       icon: BarChart3,       path: "/publisher/analytics" },
+    { label: "Dashboard",   icon: LayoutDashboard, path: "/publisher" },
+    { label: "Deploy",      icon: Rocket,          path: "/publisher/deploy" },
+    { label: "Distribute",  icon: Share2,          path: "/publisher/distribute" },
+    { label: "Analytics",   icon: BarChart3,       path: "/publisher/analytics" },
   ],
 };
 

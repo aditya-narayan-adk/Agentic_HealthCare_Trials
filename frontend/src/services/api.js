@@ -284,6 +284,27 @@ export const adsAPI = {
       body: JSON.stringify(data),
     }),
 
+  deployWebsite: (adId, data) =>
+    request(`/advertisements/${adId}/deploy`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  distributeCreatives: (adId, data) =>
+    request(`/advertisements/${adId}/distribute`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  generateQuestionnaire: (adId) =>
+    request(`/advertisements/${adId}/generate-questionnaire`, { method: "POST" }),
+
+  updateQuestionnaire: (adId, questionnaire) =>
+    request(`/advertisements/${adId}/questionnaire`, {
+      method: "PATCH",
+      body: JSON.stringify({ questionnaire }),
+    }),
+
   delete: (adId) =>
     request(`/advertisements/${adId}`, { method: "DELETE" }),
 };

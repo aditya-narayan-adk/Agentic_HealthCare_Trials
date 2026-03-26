@@ -27,6 +27,7 @@ from app.schemas.schemas import (
     AdvertisementCreate, AdvertisementOut, AdvertisementUpdate,
     ReviewCreate, ReviewOut, OptimizerDecision, BotConfigUpdate,
     AdvertisementDocumentOut, MinorEditRequest, RewriteStrategyRequest,
+    QuestionnaireUpdate,
 )
 from app.core.security import require_roles, get_current_user
 from app.services.ai.curator import CuratorService
@@ -58,6 +59,7 @@ async def create_advertisement(
         title=body.title,
         ad_type=body.ad_type,
         budget=body.budget,
+        duration=body.duration,
         platforms=body.platforms,
         target_audience=body.target_audience,
         status=AdStatus.DRAFT,
@@ -117,6 +119,70 @@ async def update_advertisement(
 
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(ad, field, value)
+    return ad
+
+
+# ─── Questionnaire ────────────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/generate-questionnaire", response_model=AdvertisementOut)
+async def generate_questionnaire(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Use Claude to auto-generate an MCQ eligibility questionnaire from campaign context."""
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    company_docs_result = await db.execute(
+        select(CompanyDocument).where(CompanyDocument.company_id == user.company_id)
+    )
+    protocol_docs_result = await db.execute(
+        select(AdvertisementDocument).where(
+            AdvertisementDocument.advertisement_id == ad_id,
+            AdvertisementDocument.company_id == user.company_id,
+        )
+    )
+    all_docs = sorted(
+        list(company_docs_result.scalars().all()) + list(protocol_docs_result.scalars().all()),
+        key=lambda d: d.priority, reverse=True,
+    )
+
+    curator = CuratorService(db, user.company_id)
+    try:
+        questionnaire = await curator.generate_questionnaire(ad, all_docs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    ad.questionnaire = questionnaire
+    return ad
+
+
+@router.patch("/{ad_id}/questionnaire", response_model=AdvertisementOut)
+async def update_questionnaire(
+    ad_id: str,
+    body: QuestionnaireUpdate,
+    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save or replace the questionnaire for a campaign."""
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    ad.questionnaire = body.questionnaire
     return ad
 
 
@@ -556,7 +622,7 @@ async def minor_edit_strategy(
 async def rewrite_strategy(
     ad_id: str,
     body: RewriteStrategyRequest,
-    user: User = Depends(require_roles([UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.REVIEWER, UserRole.ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
     """

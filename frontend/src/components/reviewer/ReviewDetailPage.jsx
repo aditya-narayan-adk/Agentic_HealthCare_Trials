@@ -26,8 +26,29 @@ import {
   ChevronDown, ChevronUp, Target, DollarSign, Users,
   Layers, TrendingUp, List, Send, Pencil, Sparkles,
   RefreshCw, CheckCircle2, BarChart2, Zap, MessageCircle,
-  FileText,
+  FileText, ClipboardList,
 } from "lucide-react";
+
+const QUESTIONNAIRE_CATEGORIES = new Set(["recruitment", "hiring", "survey", "clinical_trial", "research"]);
+
+const QUESTIONNAIRE_KEYWORDS = ["hiring", "recruit", "survey", "clinical", "trial", "research study", "job posting", "job opening", "application", "vacancy", "vacancies", "applicant", "enroll", "enrolment", "participant", "respondent"];
+
+function needsQuestionnaire(ad, docs = []) {
+  if (!ad) return false;
+  if (QUESTIONNAIRE_CATEGORIES.has(ad.campaign_category)) return true;
+  const docText = docs.map((d) => `${d.title ?? ""} ${d.doc_type ?? ""}`).join(" ").toLowerCase();
+  if (docText && QUESTIONNAIRE_KEYWORDS.some((kw) => docText.includes(kw))) return true;
+  const title = (ad.title ?? "").toLowerCase();
+  return QUESTIONNAIRE_KEYWORDS.some((kw) => title.includes(kw));
+}
+
+const QUESTION_TYPE_LABELS = {
+  text:            "Short Text",
+  textarea:        "Long Text",
+  yes_no:          "Yes / No",
+  multiple_choice: "Multiple Choice",
+  scale:           "Scale (1–5)",
+};
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -240,6 +261,193 @@ function StrategyViewer({ strategy }) {
           </ul>
         </StrategySection>
       )}
+    </div>
+  );
+}
+
+// ─── Questionnaire viewer (read-only) ─────────────────────────────────────────
+
+function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
+  const saved = questionnaire?.questions ?? [];
+  const [questions, setQuestions] = useState(saved);
+  const [dirty,     setDirty]     = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [saveOk,    setSaveOk]    = useState(false);
+  const [saveErr,   setSaveErr]   = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError,   setAiError]   = useState(null);
+
+  // Keep in sync when parent reloads after AI generation
+  useEffect(() => {
+    setQuestions(questionnaire?.questions ?? []);
+    setDirty(false);
+  }, [questionnaire]);
+
+  const updateText = (id, text) => {
+    setQuestions((prev) => prev.map((q) => q.id === id ? { ...q, text } : q));
+    setDirty(true); setSaveOk(false);
+  };
+
+  const updateOption = (id, oi, val) => {
+    setQuestions((prev) => prev.map((q) =>
+      q.id === id ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q
+    ));
+    setDirty(true); setSaveOk(false);
+  };
+
+  const saveEdits = async () => {
+    setSaving(true); setSaveErr(null); setSaveOk(false);
+    try {
+      await adsAPI.updateQuestionnaire(adId, { questions });
+      setSaveOk(true); setDirty(false);
+      if (onGenerated) onGenerated();
+    } catch (err) {
+      setSaveErr(err.message || "Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateWithAI = async () => {
+    setAiLoading(true); setAiError(null);
+    try {
+      await adsAPI.generateQuestionnaire(adId);
+      if (onGenerated) onGenerated();
+    } catch (err) {
+      setAiError(err.message || "AI generation failed.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const inputBase = {
+    width: "100%", padding: "6px 10px", borderRadius: "7px", fontSize: "0.83rem",
+    border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
+    color: "var(--color-input-text)", outline: "none", boxSizing: "border-box",
+    fontFamily: "inherit",
+  };
+  const answerPlaceholder = {
+    padding: "7px 10px", borderRadius: "7px", fontSize: "0.82rem",
+    border: "1px solid var(--color-card-border)",
+    backgroundColor: "var(--color-page-bg)",
+    color: "var(--color-sidebar-text)", fontStyle: "italic",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+
+      {/* Top action bar — always visible */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <button
+          onClick={generateWithAI}
+          disabled={aiLoading || saving}
+          className="btn--accent"
+          style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: (aiLoading || saving) ? 0.7 : 1 }}
+        >
+          {aiLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={13} />}
+          {aiLoading ? "Generating…" : questions.length ? "Regenerate with AI" : "Generate with AI"}
+        </button>
+
+        {dirty && (
+          <button
+            onClick={saveEdits}
+            disabled={saving}
+            className="btn--accent"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: saving ? 0.7 : 1 }}
+          >
+            {saving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={13} />}
+            {saving ? "Saving…" : "Save Changes"}
+          </button>
+        )}
+
+        {saveOk && !dirty && (
+          <span style={{ fontSize: "0.75rem", color: "#22c55e", display: "flex", alignItems: "center", gap: "4px" }}>
+            <CheckCircle size={12} /> Saved
+          </span>
+        )}
+      </div>
+
+      {(aiError || saveErr) && (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+          <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+          <p style={{ fontSize: "0.82rem", color: "#ef4444" }}>{aiError || saveErr}</p>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!questions.length && !aiLoading && (
+        <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", fontStyle: "italic" }}>
+          No questions yet — click "Generate with AI" above.
+        </p>
+      )}
+
+      {/* Question cards */}
+      {questions.map((q, qi) => (
+        <div key={q.id ?? qi} style={{
+          borderRadius: "10px", border: "1px solid var(--color-card-border)",
+          backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+        }}>
+          {/* Question header — text is editable */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: "10px",
+            padding: "9px 14px", borderBottom: "1px solid var(--color-card-border)",
+            backgroundColor: "var(--color-page-bg)",
+          }}>
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--color-sidebar-text)", flexShrink: 0 }}>
+              Q{qi + 1}
+            </span>
+            <input
+              style={{ ...inputBase, flex: 1, fontWeight: 600, backgroundColor: "transparent", border: "1px solid transparent", borderRadius: "6px", padding: "4px 8px",
+                transition: "border-color 0.15s",
+              }}
+              value={q.text}
+              onChange={(e) => updateText(q.id, e.target.value)}
+              onFocus={(e) => e.target.style.borderColor = "var(--color-accent)"}
+              onBlur={(e) => e.target.style.borderColor = "transparent"}
+              placeholder="Question text…"
+            />
+            <span style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)", flexShrink: 0, whiteSpace: "nowrap" }}>
+              {QUESTION_TYPE_LABELS[q.type] ?? q.type}
+              {q.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+            </span>
+          </div>
+
+          {/* Answer area — options are editable for MCQ */}
+          <div style={{ padding: "10px 14px" }}>
+            {(q.type === "text")     && <div style={answerPlaceholder}>Short text answer</div>}
+            {(q.type === "textarea") && <div style={{ ...answerPlaceholder, minHeight: "52px" }}>Long text answer</div>}
+            {(q.type === "yes_no")   && (
+              <div style={{ display: "flex", gap: "10px" }}>
+                {["Yes", "No"].map((opt) => (
+                  <span key={opt} style={{ padding: "5px 16px", borderRadius: "999px", border: "1px solid var(--color-card-border)", fontSize: "0.8rem", color: "var(--color-sidebar-text)" }}>{opt}</span>
+                ))}
+              </div>
+            )}
+            {(q.type === "scale") && (
+              <div style={{ display: "flex", gap: "8px" }}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <span key={n} style={{ width: "32px", height: "32px", borderRadius: "50%", border: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.8rem", color: "var(--color-sidebar-text)" }}>{n}</span>
+                ))}
+              </div>
+            )}
+            {(q.type === "multiple_choice") && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {(q.options ?? []).map((opt, oi) => (
+                  <div key={oi} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ width: "13px", height: "13px", borderRadius: "50%", border: "1px solid var(--color-card-border)", flexShrink: 0 }} />
+                    <input
+                      style={{ ...inputBase, flex: 1 }}
+                      value={opt}
+                      onChange={(e) => updateOption(q.id, oi, e.target.value)}
+                      placeholder={`Option ${oi + 1}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -686,20 +894,23 @@ export default function ReviewerCampaignDetail() {
   const { id }    = useParams();
   const navigate  = useNavigate();
 
-  const [ad,       setAd]       = useState(null);
-  const [reviews,  setReviews]  = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState(null);
+  const [ad,        setAd]        = useState(null);
+  const [reviews,   setReviews]   = useState([]);
+  const [protoDocs, setProtoDocs] = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState(null);
   const [activeTab, setActiveTab] = useState("verdict");
 
   const load = useCallback(async () => {
     try {
-      const [adData, reviewsData] = await Promise.all([
+      const [adData, reviewsData, docsData] = await Promise.all([
         adsAPI.get(id),
         adsAPI.listReviews(id),
+        adsAPI.listDocuments(id).catch(() => []),
       ]);
       setAd(adData);
       setReviews(reviewsData);
+      setProtoDocs(docsData ?? []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -792,6 +1003,16 @@ export default function ReviewerCampaignDetail() {
               : <p style={{ fontSize: 13, color: "var(--color-sidebar-text)" }}>Strategy not yet generated for this campaign.</p>
             }
           </SectionCard>
+
+          {/* Questionnaire (if campaign has one) */}
+          {needsQuestionnaire(ad, protoDocs) && (
+            <SectionCard
+              title="Questionnaire"
+              subtitle={`${ad.questionnaire?.questions?.length ?? 0} question${(ad.questionnaire?.questions?.length ?? 0) !== 1 ? "s" : ""} · ${ad.campaign_category ? ad.campaign_category.replace("_", " ") : "hiring / recruitment"} campaign`}
+            >
+              <QuestionnaireViewer questionnaire={ad.questionnaire} adId={id} onGenerated={handleActionDone} />
+            </SectionCard>
+          )}
 
           {/* Review history */}
           {reviews.length > 0 && (

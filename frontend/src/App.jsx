@@ -67,10 +67,9 @@ function AppRoutes() {
 
       {/* Publisher routes */}
       <Route path="/publisher" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
-      <Route path="/publisher/ads" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
-      <Route path="/publisher/website" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
-      <Route path="/publisher/bots" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
-      <Route path="/publisher/analytics" element={<ProtectedRoute allowedRoles={["publisher"]}><AnalyticsPage /></ProtectedRoute>} />
+      <Route path="/publisher/deploy" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
+      <Route path="/publisher/distribute" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
+      <Route path="/publisher/analytics" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
 
       {/* Unauthorized */}
       <Route path="/unauthorized" element={

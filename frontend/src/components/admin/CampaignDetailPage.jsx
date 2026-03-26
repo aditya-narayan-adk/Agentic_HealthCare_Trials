@@ -29,8 +29,310 @@ import {
   FileText, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Loader2, Target, DollarSign, Users, Layers, Zap, BarChart2,
   MessageCircle, Send, ThumbsUp, ThumbsDown, RefreshCw, Sparkles,
-  Download, Eye, Trash2,
+  Download, Eye, Trash2, ClipboardList, Plus, X as XIcon, GripVertical,
 } from "lucide-react";
+
+// ─── Campaign categories that require a questionnaire ─────────────────────────
+const QUESTIONNAIRE_CATEGORIES = new Set(["recruitment", "hiring", "survey", "clinical_trial", "research"]);
+
+const QUESTIONNAIRE_KEYWORDS = ["hiring", "recruit", "survey", "clinical", "trial", "research study", "job posting", "job opening", "application", "vacancy", "vacancies", "applicant", "enroll", "enrolment", "participant", "respondent"];
+
+/** Check protocol doc titles first (strongest signal), fall back to campaign title. */
+function needsQuestionnaire(ad, docs = []) {
+  if (!ad) return false;
+  if (QUESTIONNAIRE_CATEGORIES.has(ad.campaign_category)) return true;
+  const docText = docs.map((d) => `${d.title ?? ""} ${d.doc_type ?? ""}`).join(" ").toLowerCase();
+  if (docText && QUESTIONNAIRE_KEYWORDS.some((kw) => docText.includes(kw))) return true;
+  const title = (ad.title ?? "").toLowerCase();
+  return QUESTIONNAIRE_KEYWORDS.some((kw) => title.includes(kw));
+}
+
+const QUESTION_TYPES = [
+  { value: "text",             label: "Short Text" },
+  { value: "textarea",         label: "Long Text" },
+  { value: "yes_no",           label: "Yes / No" },
+  { value: "multiple_choice",  label: "Multiple Choice" },
+  { value: "scale",            label: "Scale (1–5)" },
+];
+
+function newQuestion() {
+  return { id: crypto.randomUUID(), text: "", type: "text", options: ["", ""], required: true };
+}
+
+// ─── Questionnaire builder / viewer ───────────────────────────────────────────
+function QuestionnaireSection({ adId, questionnaire, readOnly, onSaved }) {
+  const saved       = questionnaire?.questions ?? [];
+  const [questions, setQuestions] = useState(saved.length ? saved : [newQuestion()]);
+  const [saving,    setSaving]    = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved_ok,  setSavedOk]   = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError,   setAiError]   = useState(null);
+
+  // keep local state in sync when parent reloads
+  useEffect(() => {
+    const qs = questionnaire?.questions ?? [];
+    setQuestions(qs.length ? qs : [newQuestion()]);
+  }, [questionnaire]);
+
+  const updateQ = (id, patch) =>
+    setQuestions((prev) => prev.map((q) => q.id === id ? { ...q, ...patch } : q));
+
+  const updateOption = (qId, idx, val) =>
+    setQuestions((prev) => prev.map((q) =>
+      q.id === qId ? { ...q, options: q.options.map((o, i) => i === idx ? val : o) } : q
+    ));
+
+  const addOption = (qId) =>
+    setQuestions((prev) => prev.map((q) =>
+      q.id === qId ? { ...q, options: [...(q.options ?? []), ""] } : q
+    ));
+
+  const removeOption = (qId, idx) =>
+    setQuestions((prev) => prev.map((q) =>
+      q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== idx) } : q
+    ));
+
+  const addQuestion = () => setQuestions((prev) => [...prev, newQuestion()]);
+
+  const removeQuestion = (id) =>
+    setQuestions((prev) => prev.length > 1 ? prev.filter((q) => q.id !== id) : prev);
+
+  const save = async () => {
+    const incomplete = questions.find((q) => !q.text.trim());
+    if (incomplete) { setSaveError("All questions must have text."); return; }
+    setSaving(true); setSaveError(null); setSavedOk(false);
+    try {
+      await adsAPI.updateQuestionnaire(adId, { questions });
+      setSavedOk(true);
+      if (onSaved) onSaved();
+    } catch (err) {
+      setSaveError(err.message || "Failed to save questionnaire.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateWithAI = async () => {
+    setAiLoading(true); setAiError(null);
+    try {
+      const updated = await adsAPI.generateQuestionnaire(adId);
+      const qs = updated.questionnaire?.questions ?? [];
+      if (qs.length) setQuestions(qs);
+      if (onSaved) onSaved();
+    } catch (err) {
+      setAiError(err.message || "AI questionnaire generation failed.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const inputBase = {
+    width: "100%", padding: "7px 10px", borderRadius: "7px", fontSize: "0.82rem",
+    border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
+    color: "var(--color-input-text)", outline: "none", boxSizing: "border-box",
+  };
+
+  const hasQuestions = saved.length > 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+      {/* AI Generate banner */}
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <button
+          onClick={generateWithAI}
+          disabled={aiLoading}
+          className="btn--accent"
+          style={{ display: "inline-flex", alignItems: "center", gap: "7px", opacity: aiLoading ? 0.7 : 1 }}
+        >
+          {aiLoading
+            ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+            : <Sparkles size={14} />}
+          {aiLoading ? "Generating…" : hasQuestions ? "Regenerate with AI" : "Generate with AI"}
+        </button>
+        <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>
+          {hasQuestions
+            ? "Claude will replace the current questions based on campaign context and documents."
+            : "Claude will generate MCQ eligibility questions from your campaign brief and protocol documents."}
+        </p>
+      </div>
+
+      {aiError && (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+          <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+          <p style={{ fontSize: "0.82rem", color: "#ef4444" }}>{aiError}</p>
+        </div>
+      )}
+
+      <div style={{ height: "1px", backgroundColor: "var(--color-card-border)" }} />
+
+      {questions.map((q, qi) => (
+        <div key={q.id} style={{
+          borderRadius: "10px", border: "1px solid var(--color-card-border)",
+          backgroundColor: "var(--color-card-bg)", overflow: "hidden",
+        }}>
+          {/* Question header */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: "10px",
+            padding: "10px 14px", borderBottom: "1px solid var(--color-card-border)",
+            backgroundColor: "var(--color-page-bg)",
+          }}>
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--color-sidebar-text)", flexShrink: 0 }}>
+              Q{qi + 1}
+            </span>
+            {!readOnly ? (
+              <>
+                <input
+                  style={{ ...inputBase, flex: 1 }}
+                  value={q.text}
+                  onChange={(e) => updateQ(q.id, { text: e.target.value })}
+                  placeholder="Question text…"
+                />
+                <select
+                  style={{ ...inputBase, width: "auto", flexShrink: 0 }}
+                  value={q.type}
+                  onChange={(e) => updateQ(q.id, { type: e.target.value })}
+                >
+                  {QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "0.75rem", color: "var(--color-sidebar-text)", flexShrink: 0, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={q.required}
+                    onChange={(e) => updateQ(q.id, { required: e.target.checked })}
+                    style={{ accentColor: "var(--color-accent)" }}
+                  />
+                  Required
+                </label>
+                <button
+                  onClick={() => removeQuestion(q.id)}
+                  disabled={questions.length === 1}
+                  style={{ background: "none", border: "none", cursor: questions.length === 1 ? "not-allowed" : "pointer", padding: "2px", color: questions.length === 1 ? "var(--color-card-border)" : "#ef4444", flexShrink: 0 }}
+                  title="Remove question"
+                >
+                  <XIcon size={14} />
+                </button>
+              </>
+            ) : (
+              <>
+                <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)" }}>{q.text}</span>
+                <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", flexShrink: 0 }}>
+                  {QUESTION_TYPES.find((t) => t.value === q.type)?.label ?? q.type}
+                  {q.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Answer area */}
+          <div style={{ padding: "10px 14px" }}>
+            {(q.type === "text") && (
+              <div style={{ ...inputBase, color: "var(--color-sidebar-text)", fontStyle: "italic" }}>Short text answer</div>
+            )}
+            {(q.type === "textarea") && (
+              <div style={{ ...inputBase, minHeight: "56px", color: "var(--color-sidebar-text)", fontStyle: "italic" }}>Long text answer</div>
+            )}
+            {(q.type === "yes_no") && (
+              <div style={{ display: "flex", gap: "10px" }}>
+                {["Yes", "No"].map((opt) => (
+                  <span key={opt} style={{ padding: "5px 16px", borderRadius: "999px", border: "1px solid var(--color-card-border)", fontSize: "0.8rem", color: "var(--color-sidebar-text)" }}>{opt}</span>
+                ))}
+              </div>
+            )}
+            {(q.type === "scale") && (
+              <div style={{ display: "flex", gap: "8px" }}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <span key={n} style={{ width: "32px", height: "32px", borderRadius: "50%", border: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.8rem", color: "var(--color-sidebar-text)" }}>{n}</span>
+                ))}
+              </div>
+            )}
+            {(q.type === "multiple_choice") && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {(q.options ?? []).map((opt, oi) => (
+                  <div key={oi} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ width: "14px", height: "14px", borderRadius: "50%", border: "1px solid var(--color-card-border)", flexShrink: 0 }} />
+                    {!readOnly ? (
+                      <>
+                        <input
+                          style={{ ...inputBase, flex: 1 }}
+                          value={opt}
+                          onChange={(e) => updateOption(q.id, oi, e.target.value)}
+                          placeholder={`Option ${oi + 1}`}
+                        />
+                        <button
+                          onClick={() => removeOption(q.id, oi)}
+                          disabled={(q.options ?? []).length <= 2}
+                          style={{ background: "none", border: "none", cursor: (q.options ?? []).length <= 2 ? "not-allowed" : "pointer", color: (q.options ?? []).length <= 2 ? "var(--color-card-border)" : "#ef4444", padding: "2px", flexShrink: 0 }}
+                        >
+                          <XIcon size={12} />
+                        </button>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: "0.82rem", color: "var(--color-input-text)" }}>{opt || <em style={{ color: "var(--color-sidebar-text)" }}>—</em>}</span>
+                    )}
+                  </div>
+                ))}
+                {!readOnly && (
+                  <button
+                    onClick={() => addOption(q.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", color: "var(--color-accent)", fontSize: "0.75rem", fontWeight: 600, padding: "2px 0", marginTop: "2px" }}
+                  >
+                    <Plus size={12} /> Add option
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {!readOnly && (
+        <>
+          <button
+            onClick={addQuestion}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: "6px",
+              background: "none", border: "1px dashed var(--color-card-border)",
+              borderRadius: "8px", padding: "8px 16px", cursor: "pointer",
+              color: "var(--color-accent)", fontSize: "0.8rem", fontWeight: 600,
+              width: "100%", justifyContent: "center",
+            }}
+          >
+            <Plus size={13} /> Add Question
+          </button>
+
+          {saveError && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+              <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+              <p style={{ fontSize: "0.82rem", color: "#ef4444" }}>{saveError}</p>
+            </div>
+          )}
+          {saved_ok && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)" }}>
+              <CheckCircle2 size={14} style={{ color: "#22c55e", flexShrink: 0 }} />
+              <p style={{ fontSize: "0.82rem", color: "#22c55e" }}>Questionnaire saved.</p>
+            </div>
+          )}
+
+          <button
+            onClick={save}
+            disabled={saving}
+            className="btn--accent"
+            style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: saving ? 0.7 : 1 }}
+          >
+            {saving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <ClipboardList size={14} />}
+            {saving ? "Saving…" : "Save Questionnaire"}
+          </button>
+        </>
+      )}
+
+      {readOnly && questions.length === 0 && (
+        <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)" }}>No questions added yet.</p>
+      )}
+    </div>
+  );
+}
 
 // ─── Generate progress hook ───────────────────────────────────────────────────
 function useGenerateProgress() {
@@ -1127,6 +1429,11 @@ function CampaignDetailPageInner() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [websiteLoading,  setWebsiteLoading]  = useState(false);
   const [websiteError,    setWebsiteError]    = useState(null);
+  const [regenLoading,    setRegenLoading]    = useState(false);
+  const [regenError,      setRegenError]      = useState(null);
+  const [regenInstr,      setRegenInstr]      = useState("");
+  const [regenConfirmed,  setRegenConfirmed]  = useState(false);
+  const [regenOpen,       setRegenOpen]       = useState(false);
 
   const genProgress = useGenerateProgress();
 
@@ -1228,6 +1535,24 @@ function CampaignDetailPageInner() {
       setWebsiteError(err.message || "Website generation failed.");
     } finally {
       setWebsiteLoading(false);
+    }
+  };
+
+  const handleRegenStrategy = async () => {
+    if (!regenInstr.trim()) { setRegenError("Instructions are required."); return; }
+    if (!regenConfirmed)    { setRegenError("Please confirm the current strategy will be replaced."); return; }
+    setRegenLoading(true); setRegenError(null);
+    genProgress.start("Re-writing strategy…", 25000);
+    try {
+      const updated = await adsAPI.rewriteStrategy(id, { instructions: regenInstr.trim() });
+      setAd(updated);
+      genProgress.complete();
+      setRegenInstr(""); setRegenConfirmed(false); setRegenOpen(false);
+    } catch (err) {
+      genProgress.fail();
+      setRegenError(err.message || "Strategy regeneration failed.");
+    } finally {
+      setRegenLoading(false);
     }
   };
 
@@ -1371,10 +1696,34 @@ function CampaignDetailPageInner() {
               </div>
             </div>
 
+            {(ad.campaign_category || needsQuestionnaire(ad, protoDocs)) && (
+              <div>
+                <p style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)", marginBottom: "6px" }}>
+                  Category
+                </p>
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: "5px",
+                  padding: "4px 10px", borderRadius: "999px", fontSize: "0.75rem", fontWeight: 500,
+                  border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
+                  color: "var(--color-input-text)", textTransform: "capitalize",
+                }}>
+                  <ClipboardList size={11} style={{ color: "var(--color-accent)" }} />
+                  {ad.campaign_category ? ad.campaign_category.replace("_", " ") : "hiring / recruitment"}
+                </span>
+              </div>
+            )}
+
             {ad.budget && (
               <div>
                 <p style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)", marginBottom: "6px" }}>Budget</p>
                 <p style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--color-input-text)" }}>${ad.budget.toLocaleString()}</p>
+              </div>
+            )}
+
+            {ad.duration && (
+              <div>
+                <p style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)", marginBottom: "6px" }}>Duration</p>
+                <p style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--color-input-text)" }}>{ad.duration}</p>
               </div>
             )}
 
@@ -1402,6 +1751,21 @@ function CampaignDetailPageInner() {
 
           </div>
         </SectionCard>
+
+        {/* ── Questionnaire (recruitment / survey / hiring / clinical trial) ── */}
+        {needsQuestionnaire(ad, protoDocs) && (
+          <SectionCard
+            title="Questionnaire"
+            subtitle={`${ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Detected from campaign title"} — define the questions participants will answer`}
+          >
+            <QuestionnaireSection
+              adId={id}
+              questionnaire={ad.questionnaire}
+              readOnly={false}
+              onSaved={load}
+            />
+          </SectionCard>
+        )}
 
         {/* Protocol documents */}
         <SectionCard
@@ -1472,6 +1836,102 @@ function CampaignDetailPageInner() {
               <StrategyViewer strategy={ad.strategy_json} />
             ) : (
               <p style={{ fontSize: "0.85rem", color: "var(--color-sidebar-text)" }}>Strategy is being generated…</p>
+            )}
+          </SectionCard>
+        )}
+
+        {/* ── Admin: Regenerate Strategy ────────────────────────────────────── */}
+        {hasStrategy && role === "admin" && (
+          <SectionCard
+            title="Regenerate Strategy"
+            subtitle="Replace the current strategy with a new AI-generated one using your instructions"
+          >
+            {/* Collapsed toggle */}
+            {!regenOpen ? (
+              <button
+                onClick={() => setRegenOpen(true)}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "8px",
+                  background: "none", border: "1px solid var(--color-card-border)",
+                  borderRadius: "8px", padding: "7px 14px", cursor: "pointer",
+                  color: "var(--color-sidebar-text)", fontSize: "0.8rem", fontWeight: 500,
+                }}
+              >
+                <Sparkles size={13} style={{ color: "var(--color-accent)" }} />
+                Rewrite with Claude…
+              </button>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+                {/* Warning banner */}
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "12px 14px", borderRadius: "8px", backgroundColor: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.3)" }}>
+                  <Sparkles size={14} style={{ color: "#f59e0b", flexShrink: 0, marginTop: 2 }} />
+                  <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", lineHeight: 1.5 }}>
+                    This will instruct Claude to <strong style={{ color: "var(--color-input-text)" }}>replace the entire strategy</strong> using your instructions as guidance. The current strategy will be overwritten and the change will appear in the audit trail.
+                  </p>
+                </div>
+
+                {/* Instructions */}
+                <div>
+                  <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: "6px" }}>
+                    Instructions for Claude *
+                  </label>
+                  <textarea
+                    style={{
+                      width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.85rem",
+                      border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
+                      color: "var(--color-input-text)", outline: "none", boxSizing: "border-box",
+                      resize: "vertical", minHeight: "110px", fontFamily: "inherit",
+                    }}
+                    value={regenInstr}
+                    onChange={(e) => setRegenInstr(e.target.value)}
+                    placeholder="e.g. Shift focus from social media to B2B channels. Reduce influencer spend to under 10%. Keep the same target audience but adopt a more professional tone."
+                  />
+                </div>
+
+                {/* Confirmation */}
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={regenConfirmed}
+                    onChange={(e) => setRegenConfirmed(e.target.checked)}
+                    style={{ width: 15, height: 15, accentColor: "var(--color-accent)", cursor: "pointer" }}
+                  />
+                  <span style={{ fontSize: "0.82rem", color: "var(--color-input-text)" }}>
+                    I understand the current strategy will be permanently replaced
+                  </span>
+                </label>
+
+                {regenError && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                    <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+                    <p style={{ fontSize: "0.82rem", color: "#ef4444" }}>{regenError}</p>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                  <ActionButton
+                    onClick={handleRegenStrategy}
+                    loading={regenLoading}
+                    disabled={!regenConfirmed}
+                    icon={<Sparkles size={14} />}
+                  >
+                    {regenLoading ? "Re-writing… (15–30 s)" : "Trigger AI Re-Strategy"}
+                  </ActionButton>
+                  {regenLoading
+                    ? <InlineProgress progress={genProgress.progress} />
+                    : (
+                      <button
+                        onClick={() => { setRegenOpen(false); setRegenError(null); setRegenInstr(""); setRegenConfirmed(false); }}
+                        className="btn--ghost"
+                        style={{ fontSize: "0.8rem" }}
+                      >
+                        Cancel
+                      </button>
+                    )
+                  }
+                </div>
+              </div>
             )}
           </SectionCard>
         )}
@@ -1578,7 +2038,7 @@ function CampaignDetailPageInner() {
         )}
 
         {/* ── Generate Ad Creatives ─────────────────────────────────────────── */}
-        {(ad.status === "approved" || ad.status === "published") && (
+        {(ad.status === "approved" || ad.status === "published") && role === "publisher" && (
           <SectionCard
             title="Generate Ad Creatives"
             subtitle="Claude writes copy · Titan Image Generator v2 produces the visuals"
@@ -1617,7 +2077,7 @@ function CampaignDetailPageInner() {
         )}
 
         {/* ── Generate Website ──────────────────────────────────────────────── */}
-        {(ad.status === "approved" || ad.status === "published") && ad.ad_type?.includes("website") && (
+        {(ad.status === "approved" || ad.status === "published") && ad.ad_type?.includes("website") && role === "publisher" && (
           <SectionCard
             title="Generate Landing Page"
             subtitle="Claude builds a complete, brand-styled HTML page from your strategy and website requirements"
