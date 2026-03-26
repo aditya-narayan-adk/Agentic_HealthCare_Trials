@@ -18,7 +18,7 @@ def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 from sqlalchemy import (
     Column, String, Text, DateTime, ForeignKey, Enum, Boolean,
-    Integer, Float, JSON,
+    Integer, Float, JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from app.db.database import Base
@@ -183,6 +183,7 @@ class BrandKit(Base):
 
 class SkillConfig(Base):
     __tablename__ = "skill_configs"
+    __table_args__ = (UniqueConstraint("company_id", "skill_type", name="uq_skill_configs_company_skill"),)
 
     id             = Column(String, primary_key=True, default=_uuid)
     company_id     = Column(String, ForeignKey("companies.id"), nullable=False)

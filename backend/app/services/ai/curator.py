@@ -278,6 +278,11 @@ Return ONLY a JSON object in this exact format:
                 "website": {"pages": ["Home", "About", "Services", "Contact"], "design_direction": "Modern minimal"},
                 "ads": {"formats": ["Banner", "Video", "Carousel"], "copy_variants": 3},
             },
-            "kpis": ["CTR > 2%", "Conversion rate > 5%", "CPA < $50"],
+            "kpis": [
+                {"metric": "CTR",             "target": "≥ 2%",   "context": "paid search & display"},
+                {"metric": "Conversion Rate", "target": "≥ 5%",   "context": "landing page"},
+                {"metric": "CPA",             "target": "< $50",  "context": "per acquisition"},
+                {"metric": "ROAS",            "target": "3×",     "context": "across all channels"},
+            ],
             "budget_breakdown": {"creative": 0.3, "media_buy": 0.5, "tools": 0.1, "contingency": 0.1},
         }

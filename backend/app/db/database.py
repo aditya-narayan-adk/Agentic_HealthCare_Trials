@@ -70,3 +70,18 @@ async def init_db():
             "ALTER TABLE advertisements "
             "ADD COLUMN IF NOT EXISTS duration VARCHAR(128);"
         ))
+        # Deduplicate skill_configs before adding unique constraint.
+        # Keeps the row with the highest version (latest training) per company+skill_type.
+        await conn.execute(_sql("""
+            DELETE FROM skill_configs
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (company_id, skill_type) id
+                FROM skill_configs
+                ORDER BY company_id, skill_type, version DESC, updated_at DESC
+            );
+        """))
+        # Add unique constraint required for ON CONFLICT upsert in trainer.py
+        await conn.execute(_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_skill_configs_company_skill "
+            "ON skill_configs (company_id, skill_type);"
+        ))

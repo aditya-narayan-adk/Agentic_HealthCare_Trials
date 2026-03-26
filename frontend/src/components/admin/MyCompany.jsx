@@ -11,12 +11,12 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
-import { documentsAPI, brandKitAPI } from "../../services/api";
+import { documentsAPI, brandKitAPI, onboardingAPI } from "../../services/api";
 import { useAuth } from "../../contexts/AuthContext";
 import { applyBrandTheme, resetBrandTheme, isDefaultThemeOverrideActive } from "../../services/theme";
 import {
   FileText, Plus, Pencil, Trash2, Upload, X, File, CheckCircle2, Download,
-  Palette, Check, ChevronDown, ChevronUp, RotateCcw,
+  Palette, Check, ChevronDown, ChevronUp, RotateCcw, Sparkles, Loader2, AlertCircle,
 } from "lucide-react";
 import { DOC_TYPES, ACCEPTED_DOC_FORMATS, ACCEPTED_DOC_MIME, BRAND_PRESETS, DEFAULT_PRESETS } from "../onboarding/Constants";
 
@@ -820,12 +820,27 @@ function BrandKitPanel() {
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function MyCompany() {
   const { role } = useAuth();
-  const [docs,        setDocs]        = useState([]);
-  const [filter,      setFilter]      = useState("");
-  const [mode,        setMode]        = useState(null);   // null | "add" | "edit"
-  const [editingDoc,  setEditingDoc]  = useState(null);
-  const [previewDoc,  setPreviewDoc]  = useState(null);   // doc to preview, or null
-  const [saving,      setSaving]      = useState(false);
+  const [docs,          setDocs]          = useState([]);
+  const [filter,        setFilter]        = useState("");
+  const [mode,          setMode]          = useState(null);   // null | "add" | "edit"
+  const [editingDoc,    setEditingDoc]    = useState(null);
+  const [previewDoc,    setPreviewDoc]    = useState(null);   // doc to preview, or null
+  const [saving,        setSaving]        = useState(false);
+  const [retraining,    setRetraining]    = useState(false);
+  const [retrainOk,     setRetrainOk]     = useState(false);
+  const [retrainErr,    setRetrainErr]    = useState(null);
+
+  const triggerRetrain = async () => {
+    setRetraining(true); setRetrainOk(false); setRetrainErr(null);
+    try {
+      await onboardingAPI.triggerTraining();
+      setRetrainOk(true);
+    } catch (err) {
+      setRetrainErr(err.message || "Retraining failed.");
+    } finally {
+      setRetraining(false);
+    }
+  };
 
   useEffect(() => {
     documentsAPI.list(filter || undefined).then(setDocs).catch(console.error);
@@ -839,9 +854,7 @@ export default function MyCompany() {
     try {
       const created = await documentsAPI.upload(doc_type, title, file);
       setDocs((p) => [...p, created]);
-      // TODO: trigger AI retraining — POST /onboarding/train
-      // Any change to company documents should retrain Curator + Reviewer skills
-      // so the SkillConfig reflects the latest document set.
+      onboardingAPI.triggerTraining().catch(() => {}); // fire-and-forget: refresh SkillConfig
       closeForm();
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
@@ -853,7 +866,7 @@ export default function MyCompany() {
     try {
       const updated = await documentsAPI.update(editingDoc.id, { title, content });
       setDocs((p) => p.map((d) => (d.id === editingDoc.id ? updated : d)));
-      // TODO: trigger AI retraining — POST /onboarding/train
+      onboardingAPI.triggerTraining().catch(() => {}); // fire-and-forget
       closeForm();
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
@@ -865,7 +878,7 @@ export default function MyCompany() {
     if (!confirm("Delete this document?")) return;
     await documentsAPI.delete(id);
     setDocs((p) => p.filter((d) => d.id !== id));
-    // TODO: trigger AI retraining — POST /onboarding/train
+    onboardingAPI.triggerTraining().catch(() => {}); // fire-and-forget
   };
 
   const handleEditClick = (e, doc) => {
@@ -1018,6 +1031,45 @@ export default function MyCompany() {
           );
         })}
       </div>
+
+      {/* ── AI Skills (admin only) ─────────────────────────────────────────── */}
+      {role === "admin" && (
+        <SectionCard
+          title="AI Skills"
+          subtitle="Retrain the Curator & Reviewer skills against your current documents. Run this after adding documents or when a system template update is released."
+          style={{ marginTop: 32 }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <button
+              onClick={triggerRetrain}
+              disabled={retraining}
+              className="btn--accent"
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, opacity: retraining ? 0.7 : 1 }}
+            >
+              {retraining
+                ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                : <Sparkles size={14} />}
+              {retraining ? "Retraining…" : "Retrain AI Skills"}
+            </button>
+
+            {retrainOk && !retraining && (
+              <span style={{ fontSize: "0.78rem", color: "#22c55e", display: "flex", alignItems: "center", gap: 5 }}>
+                <CheckCircle2 size={13} /> Skills updated — new strategies will use the latest template
+              </span>
+            )}
+            {retrainErr && (
+              <span style={{ fontSize: "0.78rem", color: "#ef4444", display: "flex", alignItems: "center", gap: 5 }}>
+                <AlertCircle size={13} /> {retrainErr}
+              </span>
+            )}
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: 10 }}>
+            After retraining, use <strong>Regenerate Strategy</strong> on any campaign to apply the updated KPI format and improvements.
+          </p>
+        </SectionCard>
+      )}
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </PageWithSidebar>
   );
 }

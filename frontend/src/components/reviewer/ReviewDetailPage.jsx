@@ -240,32 +240,7 @@ function StrategyViewer({ strategy }) {
 
       {s.kpis?.length > 0 && (
         <StrategySection icon={TrendingUp} title={`KPIs (${s.kpis.length})`} isOpen={openSection === "kpis"} onToggle={() => toggle("kpis")}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-            {s.kpis.map((k, i) => (
-              <div key={i} style={{
-                border: "1px solid var(--color-card-border)", borderRadius: 10,
-                padding: "12px 14px", backgroundColor: "var(--color-page-bg)",
-                display: "flex", flexDirection: "column", gap: 8,
-              }}>
-                {/* Header: number badge + sparkline + spark icon */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
-                  <span style={{
-                    fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.06em",
-                    color: "var(--color-accent)",
-                    backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                    padding: "2px 7px", borderRadius: 4, flexShrink: 0,
-                  }}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <Sparkles size={12} style={{ color: "var(--color-accent)", opacity: 0.55, flexShrink: 0 }} />
-                </div>
-                {/* KPI text */}
-                <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0, flex: 1 }}>{k}</p>
-                {/* Target bar — only shown when KPI text contains a % value */}
-                <KpiTargetBar text={k} />
-              </div>
-            ))}
-          </div>
+          <QuantKpiChart kpis={s.kpis} />
         </StrategySection>
       )}
     </div>
@@ -646,33 +621,99 @@ const DONUT_PALETTE = [
   "#14b8a6", "#8b5cf6", "#f97316", "#0ea5e9",
 ];
 
-// Parse the first percentage from a KPI string, e.g. "Achieve 15% CTR" → 15
-function parseKpiPercent(text) {
-  const m = text.match(/(\d+(?:\.\d+)?)\s*%/);
-  return m ? Math.min(100, parseFloat(m[1])) : null;
+// Detect KPI category from metric name → { label, color } or null
+function detectKpiCategory(text) {
+  const t = (text ?? "").toLowerCase();
+  if (/ctr|click.through|click.rate/.test(t))  return { label: "CTR",        color: "#6366f1" };
+  if (/cpa|cost.per.acq|cost per acq/.test(t)) return { label: "CPA",        color: "#f59e0b" };
+  if (/roas|return.on.ad/.test(t))             return { label: "ROAS",       color: "#14b8a6" };
+  if (/impression|reach|awareness/.test(t))    return { label: "REACH",      color: "#8b5cf6" };
+  if (/conversion|convert/.test(t))            return { label: "CVR",        color: "#ec4899" };
+  if (/engag/.test(t))                         return { label: "ENG",        color: "#f97316" };
+  if (/revenue|roi|return on invest/.test(t))  return { label: "ROI",        color: "#0ea5e9" };
+  if (/bounce/.test(t))                        return { label: "BOUNCE",     color: "#ef4444" };
+  if (/open rate|email/.test(t))               return { label: "EMAIL",      color: "#22c55e" };
+  if (/lead/.test(t))                          return { label: "LEADS",      color: "#a78bfa" };
+  if (/view|video|watch/.test(t))              return { label: "VIDEO",      color: "#fb923c" };
+  return null;
 }
 
-// Data-driven target bar — only renders when the KPI text contains a percentage.
-// The bar width reflects the actual target value; nothing is made up.
-function KpiTargetBar({ text }) {
-  const pct = parseKpiPercent(text);
-  if (pct === null) return null;
+// Extract a raw numeric value from a target string — used to decide quant vs qual
+// and to normalize bar heights. Handles %, $, ×/x, k/m suffixes.
+function extractNumber(str) {
+  if (!str) return null;
+  const s = str.replace(/,/g, "");
+  const m = s.match(/(\d+(?:\.\d+)?)\s*([km×x]?)/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  const suf = m[2].toLowerCase();
+  if (suf === "k") n *= 1000;
+  else if (suf === "m") n *= 1_000_000;
+  return n;
+}
+
+// ─── Bar chart for quantitative KPIs ──────────────────────────────────────────
+
+function QuantKpiChart({ kpis, editable = false, onUpdate }) {
+  const normalized = kpis.map(k => typeof k === "string" ? { metric: k, target: null, context: null } : k);
+  const nums    = normalized.map(k => extractNumber(k.target) ?? 0);
+  const maxVal  = Math.max(...nums, 1);
+  const BAR_MAX = 88, BAR_MIN = 28;
+
   return (
-    <div style={{ marginTop: 2 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.07em", color: "var(--color-sidebar-text)" }}>TARGET</span>
-        <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--color-accent)" }}>{pct}%</span>
+    <div>
+      {/* Bars */}
+      <div style={{
+        display: "flex", alignItems: "flex-end", gap: 10,
+        paddingBottom: 0, borderBottom: "2px solid var(--color-card-border)",
+      }}>
+        {normalized.map((k, i) => {
+          const cat   = detectKpiCategory(k.metric);
+          const color = cat?.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length];
+          const barH  = nums[i] === 0 ? BAR_MIN : BAR_MIN + ((nums[i] / maxVal) * (BAR_MAX - BAR_MIN));
+          return (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              {/* Target value above bar */}
+              {editable
+                ? <InlineField value={k.target ?? ""} onChange={(v) => onUpdate(i, "target", v)} multiline={false}
+                    extraStyle={{ fontSize: "0.72rem", fontWeight: 700, color, textAlign: "center", maxWidth: "100%" }} placeholder="Target…" />
+                : <span style={{ fontSize: "0.72rem", fontWeight: 800, color, letterSpacing: "0.02em" }}>{k.target}</span>
+              }
+              {/* Bar */}
+              <div style={{
+                width: "100%", height: barH, borderRadius: "5px 5px 0 0",
+                background: `linear-gradient(180deg, ${color}dd 0%, ${color}55 100%)`,
+                transition: "height 0.45s ease",
+              }} />
+            </div>
+          );
+        })}
       </div>
-      <div style={{ position: "relative", height: 5, borderRadius: 999, backgroundColor: "var(--color-card-border)" }}>
-        <div style={{
-          position: "absolute", inset: "0 auto 0 0", width: `${pct}%`,
-          borderRadius: 999,
-          background: "linear-gradient(90deg, rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.4), rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.85))",
-        }} />
+      {/* Metric labels + context below x-axis */}
+      <div style={{ display: "flex", gap: 10, paddingTop: 6 }}>
+        {normalized.map((k, i) => {
+          const cat   = detectKpiCategory(k.metric);
+          const color = cat?.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length];
+          return (
+            <div key={i} style={{ flex: 1, textAlign: "center" }}>
+              {editable
+                ? <InlineField value={k.metric ?? ""} onChange={(v) => onUpdate(i, "metric", v)} multiline={false}
+                    extraStyle={{ fontSize: "0.72rem", fontWeight: 700, color, textAlign: "center" }} placeholder="Metric…" />
+                : <p style={{ fontSize: "0.72rem", fontWeight: 700, color, margin: 0 }}>{k.metric}</p>
+              }
+              {editable
+                ? <InlineField value={k.context ?? ""} onChange={(v) => onUpdate(i, "context", v)} multiline={false}
+                    extraStyle={{ fontSize: "0.6rem", color: "var(--color-sidebar-text)", textAlign: "center" }} placeholder="Context…" />
+                : k.context && <p style={{ fontSize: "0.6rem", color: "var(--color-sidebar-text)", margin: "2px 0 0", lineHeight: 1.3 }}>{k.context}</p>
+              }
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
+
 
 function DonutChart({ slices, size = 150, thickness = 26 }) {
   const r    = (size - thickness) / 2;
@@ -802,9 +843,17 @@ function EditableStrategyViewer({ strategy, adId, onSaved }) {
   const [openSection, setOpenSection] = useState(null);
   const toggle = (key) => setOpenSection((prev) => prev === key ? null : key);
 
-  const updateKpi = (index, value) => {
+  // Handles both old string KPIs (field=null) and new structured KPIs (field = "metric"|"target"|"context")
+  const updateKpi = (index, fieldOrValue, value) => {
     const newKpis = [...(s.kpis ?? [])];
-    newKpis[index] = value;
+    if (value !== undefined) {
+      // structured update: updateKpi(i, "metric", newVal)
+      const cur = newKpis[index];
+      newKpis[index] = typeof cur === "object" ? { ...cur, [fieldOrValue]: value } : { [fieldOrValue]: value };
+    } else {
+      // legacy string update: updateKpi(i, newVal)
+      newKpis[index] = fieldOrValue;
+    }
     setS((prev) => ({ ...prev, kpis: newKpis }));
     setDirty((prev) => ({ ...prev, kpis: { kpis: { old: JSON.stringify(strategy?.kpis ?? []), new: JSON.stringify(newKpis) } } }));
     setSaveOk((prev) => ({ ...prev, kpis: false }));
@@ -1016,37 +1065,7 @@ function EditableStrategyViewer({ strategy, adId, onSaved }) {
 
       {s.kpis?.length > 0 && (
         <StrategySection icon={TrendingUp} title={`KPIs (${s.kpis.length})`} isOpen={openSection === "kpis"} onToggle={() => toggle("kpis")}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-            {s.kpis.map((k, i) => (
-              <div key={i} style={{
-                border: "1px solid var(--color-card-border)", borderRadius: 10,
-                padding: "12px 14px", backgroundColor: "var(--color-page-bg)",
-                display: "flex", flexDirection: "column", gap: 8,
-              }}>
-                {/* Header: number badge + spark icon */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{
-                    fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.06em",
-                    color: "var(--color-accent)",
-                    backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                    padding: "2px 7px", borderRadius: 4, flexShrink: 0,
-                  }}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <Sparkles size={12} style={{ color: "var(--color-accent)", opacity: 0.55, flexShrink: 0 }} />
-                </div>
-                {/* Editable KPI text */}
-                <InlineField
-                  value={k}
-                  onChange={(v) => updateKpi(i, v)}
-                  multiline={false}
-                  extraStyle={{ fontSize: "0.78rem", lineHeight: 1.6, flex: 1 }}
-                />
-                {/* Target bar — only shown when KPI text contains a % value */}
-                <KpiTargetBar text={k} />
-              </div>
-            ))}
-          </div>
+          <QuantKpiChart kpis={s.kpis} editable onUpdate={(idx, field, value) => updateKpi(idx, field, value)} />
           <SaveBar sectionKey="kpis" />
         </StrategySection>
       )}
