@@ -16,11 +16,74 @@
  *  - Priority 10 — curator treats these as higher-priority context than company docs (0).
  */
 
-import React, { useState } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
 import { adsAPI } from "../../services/api";
 import { Globe, Image, Bot, MessageSquare, Sparkles, FileText, X, Upload } from "lucide-react";
+
+// ─── Progress utilities ───────────────────────────────────────────────────────
+function useGenerateProgress() {
+  const [progress, setProgress] = useState(0);
+  const timerRef   = useRef(null);
+  const startedAt  = useRef(null);
+  const durationMs = useRef(20000);
+
+  const tick = useCallback(() => {
+    const elapsed = Date.now() - startedAt.current;
+    const pct = Math.min(92, 92 * (1 - Math.exp(-(elapsed / durationMs.current) * 2)));
+    setProgress(Math.round(pct));
+  }, []);
+
+  const start = useCallback((estimatedMs = 20000) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    startedAt.current  = Date.now();
+    durationMs.current = estimatedMs;
+    setProgress(2);
+    timerRef.current = setInterval(tick, 250);
+  }, [tick]);
+
+  const complete = useCallback(() => {
+    clearInterval(timerRef.current);
+    setProgress(100);
+    setTimeout(() => setProgress(0), 700);
+  }, []);
+
+  const fail = useCallback(() => {
+    clearInterval(timerRef.current);
+    setProgress(0);
+  }, []);
+
+  useEffect(() => () => clearInterval(timerRef.current), []);
+  return { progress, start, complete, fail };
+}
+
+function InlineProgress({ progress }) {
+  if (!progress) return null;
+  const done = progress === 100;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+      <div style={{
+        flex: 1, height: "5px", minWidth: "80px", maxWidth: "220px",
+        background: "rgba(0,0,0,0.08)", borderRadius: "50px", overflow: "hidden",
+      }}>
+        <div style={{
+          height: "100%", width: `${progress}%`,
+          background: "var(--color-accent)",
+          borderRadius: "50px",
+          transition: "width 0.25s ease",
+        }} />
+      </div>
+      <span style={{
+        fontSize: "0.72rem", fontWeight: 600,
+        color: "var(--color-accent)",
+        fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+      }}>
+        {done ? "✓ Done" : `${progress}%`}
+      </span>
+    </div>
+  );
+}
 
 // Accepted MIME types and their display labels
 const ACCEPTED_TYPES = {
@@ -193,6 +256,7 @@ export default function CampaignCreator() {
   const navigate    = useNavigate();
   const [loading,    setLoading]    = useState(false);
   const [generating, setGenerating] = useState(false);
+  const genProgress = useGenerateProgress();
   const [createdAd,  setCreatedAd]  = useState(null);
   const [uploadProgress, setUploadProgress] = useState("");
 
@@ -274,12 +338,16 @@ export default function CampaignCreator() {
 
   const handleGenerate = async () => {
     setGenerating(true);
+    genProgress.start(40000);
     try {
       await adsAPI.generateStrategy(createdAd.id);
       await adsAPI.submitForReview(createdAd.id);
+      genProgress.complete();
       navigate("/admin");
-    } catch (err) { alert("Strategy generation failed:\n\n" + extractErrorMessage(err)); }
-    finally { setGenerating(false); }
+    } catch (err) {
+      genProgress.fail();
+      alert("Strategy generation failed:\n\n" + extractErrorMessage(err));
+    } finally { setGenerating(false); }
   };
 
   const websiteSelected = form.ad_types.includes("website");
@@ -477,9 +545,12 @@ export default function CampaignCreator() {
               )}
               {" "}Generate an AI marketing strategy and submit for review?
             </p>
-            <button onClick={handleGenerate} disabled={generating} className="btn--accent px-8 py-2.5">
-              {generating ? <><span className="spinner" /> AI is generating strategy…</> : "Generate Strategy & Submit for Review"}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+              <button onClick={handleGenerate} disabled={generating} className="btn--accent px-8 py-2.5">
+                {generating ? <><span className="spinner" /> AI is generating strategy…</> : "Generate Strategy & Submit for Review"}
+              </button>
+              {generating && <InlineProgress progress={genProgress.progress} />}
+            </div>
           </div>
         </SectionCard>
       )}

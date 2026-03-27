@@ -51,6 +51,76 @@ const QUESTION_TYPE_LABELS = {
   scale:           "Scale (1–5)",
 };
 
+// ─── Progress utilities (mirrors admin CampaignDetailPage) ───────────────────
+
+function useGenerateProgress() {
+  const [progress, setProgress] = useState(0);
+  const [label,    setLabel]    = useState("");
+  const timerRef   = useRef(null);
+  const startedAt  = useRef(null);
+  const durationMs = useRef(20000);
+
+  const tick = useCallback(() => {
+    const elapsed = Date.now() - startedAt.current;
+    const dur     = durationMs.current;
+    const pct = Math.min(92, 92 * (1 - Math.exp(-(elapsed / dur) * 2)));
+    setProgress(Math.round(pct));
+  }, []);
+
+  const start = useCallback((taskLabel, estimatedMs = 20000) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    startedAt.current  = Date.now();
+    durationMs.current = estimatedMs;
+    setLabel(taskLabel);
+    setProgress(2);
+    timerRef.current = setInterval(tick, 250);
+  }, [tick]);
+
+  const complete = useCallback(() => {
+    clearInterval(timerRef.current);
+    setProgress(100);
+    setTimeout(() => { setProgress(0); setLabel(""); }, 700);
+  }, []);
+
+  const fail = useCallback(() => {
+    clearInterval(timerRef.current);
+    setProgress(0);
+    setLabel("");
+  }, []);
+
+  useEffect(() => () => clearInterval(timerRef.current), []);
+  return { progress, label, start, complete, fail };
+}
+
+function InlineProgress({ progress }) {
+  if (!progress) return null;
+  const done = progress === 100;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+      <div style={{
+        flex: 1, height: "5px", minWidth: "80px", maxWidth: "220px",
+        background: "var(--color-accent-subtle, rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12))",
+        borderRadius: "50px", overflow: "hidden",
+      }}>
+        <div style={{
+          height: "100%", width: `${progress}%`,
+          background: "var(--color-accent)",
+          opacity: done ? 1 : 0.85,
+          borderRadius: "50px",
+          transition: "width 0.25s ease",
+        }} />
+      </div>
+      <span style={{
+        fontSize: "0.72rem", fontWeight: 600,
+        color: "var(--color-accent)",
+        fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+      }}>
+        {done ? "✓ Done" : `${progress}%`}
+      </span>
+    </div>
+  );
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const STATUS_STEPS = [
@@ -223,18 +293,7 @@ function StrategyViewer({ strategy }) {
 
       {s.content_plan?.length > 0 && (
         <StrategySection icon={List} title={`Content Plan (${s.content_plan.length} items)`} isOpen={openSection === "content"} onToggle={() => toggle("content")}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {s.content_plan.map((item, i) => (
-              <div key={i} style={{ border: "1px solid var(--color-border, #e5e7eb)", borderRadius: 8, padding: "10px 14px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                  <Tag>{item.channel}</Tag>
-                  <span style={{ fontSize: 11, color: "var(--color-sidebar-text)", textAlign: "right", maxWidth: "55%" }}>{item.format}</span>
-                </div>
-                <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginBottom: 6 }}><strong>Frequency:</strong> {item.frequency}</p>
-                {item.example && <p style={{ fontSize: 12, color: "var(--color-input-text)", lineHeight: 1.6 }}>{item.example}</p>}
-              </div>
-            ))}
-          </div>
+          <ContentPlanTable items={s.content_plan} />
         </StrategySection>
       )}
 
@@ -247,12 +306,114 @@ function StrategyViewer({ strategy }) {
   );
 }
 
+// ─── Content plan table (mirrors admin StrategyViewer) ────────────────────────
+
+function ContentPlanTable({ items }) {
+  const rows = Array.isArray(items) ? items : Object.values(items);
+  const [expandedRow, setExpandedRow] = useState(null);
+  if (!rows.length) return null;
+
+  const PREFERRED_ORDER = ["channel", "format", "frequency", "example"];
+  const allKeys = Array.from(new Set(rows.flatMap(r => Object.keys(r))));
+  const cols = [
+    ...PREFERRED_ORDER.filter(k => allKeys.includes(k)),
+    ...allKeys.filter(k => !PREFERRED_ORDER.includes(k)),
+  ];
+  const mainCols = cols.filter(k => k !== "example");
+  const COL_WIDTHS = { channel: "22%", format: "30%", frequency: "22%" };
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+        <thead>
+          <tr>
+            {mainCols.map(col => (
+              <th key={col} style={{
+                padding: "6px 12px", textAlign: "left",
+                width: COL_WIDTHS[col],
+                fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
+                borderBottom: "1px solid var(--color-card-border)",
+                whiteSpace: "nowrap",
+              }}>
+                {col.replace(/_/g, " ")}
+              </th>
+            ))}
+            {cols.includes("example") && (
+              <th style={{
+                padding: "6px 12px", textAlign: "left",
+                fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
+                borderBottom: "1px solid var(--color-card-border)",
+                whiteSpace: "nowrap", width: "80px",
+              }}>
+                Example
+              </th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <React.Fragment key={i}>
+              <tr style={{ backgroundColor: i % 2 === 0 ? "transparent" : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.03)" }}>
+                {mainCols.map(col => (
+                  <td key={col} style={{
+                    padding: "8px 12px", color: "var(--color-input-text)",
+                    borderBottom: expandedRow === i ? "none" : "1px solid var(--color-card-border)",
+                    verticalAlign: "top", lineHeight: 1.5,
+                  }}>
+                    {String(row[col] ?? "")}
+                  </td>
+                ))}
+                {cols.includes("example") && (
+                  <td style={{
+                    padding: "8px 12px",
+                    borderBottom: expandedRow === i ? "none" : "1px solid var(--color-card-border)",
+                    verticalAlign: "top",
+                  }}>
+                    {row.example && (
+                      <button
+                        onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                        style={{
+                          background: "none", border: "none", cursor: "pointer", padding: 0,
+                          display: "inline-flex", alignItems: "center", gap: "4px",
+                          color: "var(--color-accent)", fontSize: "0.72rem", fontWeight: 600,
+                        }}
+                      >
+                        <Eye size={11} />
+                        {expandedRow === i ? "Hide" : "View"}
+                      </button>
+                    )}
+                  </td>
+                )}
+              </tr>
+              {expandedRow === i && row.example && (
+                <tr style={{ backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.04)" }}>
+                  <td colSpan={mainCols.length + 1} style={{
+                    padding: "10px 12px 12px",
+                    borderBottom: "1px solid var(--color-card-border)",
+                  }}>
+                    <p style={{ fontSize: "0.76rem", color: "var(--color-sidebar-text)", lineHeight: 1.6, fontStyle: "italic" }}>
+                      {row.example}
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── Questionnaire viewer (read-only) ─────────────────────────────────────────
 
 function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
   const saved = questionnaire?.questions ?? [];
   const [questions, setQuestions] = useState(saved);
   const [dirty,     setDirty]     = useState(false);
+  const qProgress = useGenerateProgress();
   const [saving,    setSaving]    = useState(false);
   const [saveOk,    setSaveOk]    = useState(false);
   const [saveErr,   setSaveErr]   = useState(null);
@@ -292,10 +453,13 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
 
   const generateWithAI = async () => {
     setAiLoading(true); setAiError(null);
+    qProgress.start("Generating questions…", 15000);
     try {
       await adsAPI.generateQuestionnaire(adId);
+      qProgress.complete();
       if (onGenerated) onGenerated();
     } catch (err) {
+      qProgress.fail();
       setAiError(err.message || "AI generation failed.");
     } finally {
       setAiLoading(false);
@@ -329,6 +493,7 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
           {aiLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={13} />}
           {aiLoading ? "Generating…" : questions.length ? "Regenerate with AI" : "Generate with AI"}
         </button>
+        <InlineProgress progress={qProgress.progress} />
 
         {dirty && (
           <button
@@ -840,7 +1005,8 @@ function EditableStrategyViewer({ strategy, adId, onSaved }) {
   const [saving, setSaving]     = useState({});
   const [saveErr, setSaveErr]   = useState({});
   const [saveOk, setSaveOk]     = useState({});
-  const [openSection, setOpenSection] = useState(null);
+  const [openSection, setOpenSection]         = useState(null);
+  const [expandedContentRow, setExpandedContentRow] = useState(null);
   const toggle = (key) => setOpenSection((prev) => prev === key ? null : key);
 
   // Handles both old string KPIs (field=null) and new structured KPIs (field = "metric"|"target"|"context")
@@ -1027,37 +1193,81 @@ function EditableStrategyViewer({ strategy, adId, onSaved }) {
 
       {s.content_plan?.length > 0 && (
         <StrategySection icon={List} title={`Content Plan (${s.content_plan.length} items)`} isOpen={openSection === "content"} onToggle={() => toggle("content")}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {s.content_plan.map((item, i) => (
-              <div key={i} style={{ border: "1px solid var(--color-border, #e5e7eb)", borderRadius: 8, padding: "10px 14px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <Tag>{item.channel}</Tag>
-                  <InlineField
-                    value={item.format ?? ""}
-                    onChange={(v) => updateContentItem(i, "format", v)}
-                    multiline={false}
-                    placeholder="Format…"
-                    extraStyle={{ fontSize: 11, color: "var(--color-sidebar-text)" }}
-                  />
-                </div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 4 }}>
-                  <strong style={{ fontSize: 12, color: "var(--color-sidebar-text)", flexShrink: 0 }}>Frequency:</strong>
-                  <InlineField
-                    value={item.frequency ?? ""}
-                    onChange={(v) => updateContentItem(i, "frequency", v)}
-                    multiline={false}
-                    placeholder="Frequency…"
-                    extraStyle={{ fontSize: 12 }}
-                  />
-                </div>
-                <InlineField
-                  value={item.example ?? ""}
-                  onChange={(v) => updateContentItem(i, "example", v)}
-                  placeholder="Example content…"
-                  extraStyle={{ fontSize: 12 }}
-                />
-              </div>
-            ))}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+              <thead>
+                <tr>
+                  {[["Channel", "22%"], ["Format", "30%"], ["Frequency", "22%"], ["Example", "80px"]].map(([col, w]) => (
+                    <th key={col} style={{
+                      padding: "6px 12px", textAlign: "left", width: w,
+                      fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
+                      letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
+                      borderBottom: "1px solid var(--color-card-border)",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {s.content_plan.map((item, i) => (
+                  <React.Fragment key={i}>
+                    <tr style={{ backgroundColor: i % 2 === 0 ? "transparent" : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.03)" }}>
+                      <td style={{ padding: "8px 12px", borderBottom: expandedContentRow === i ? "none" : "1px solid var(--color-card-border)", verticalAlign: "middle" }}>
+                        <Tag>{item.channel}</Tag>
+                      </td>
+                      <td style={{ padding: "8px 12px", borderBottom: expandedContentRow === i ? "none" : "1px solid var(--color-card-border)", verticalAlign: "middle" }}>
+                        <InlineField
+                          value={item.format ?? ""}
+                          onChange={(v) => updateContentItem(i, "format", v)}
+                          multiline={false}
+                          placeholder="Format…"
+                          extraStyle={{ fontSize: "0.78rem" }}
+                        />
+                      </td>
+                      <td style={{ padding: "8px 12px", borderBottom: expandedContentRow === i ? "none" : "1px solid var(--color-card-border)", verticalAlign: "middle" }}>
+                        <InlineField
+                          value={item.frequency ?? ""}
+                          onChange={(v) => updateContentItem(i, "frequency", v)}
+                          multiline={false}
+                          placeholder="Frequency…"
+                          extraStyle={{ fontSize: "0.78rem" }}
+                        />
+                      </td>
+                      <td style={{ padding: "8px 12px", borderBottom: expandedContentRow === i ? "none" : "1px solid var(--color-card-border)", verticalAlign: "middle" }}>
+                        {item.example !== undefined && (
+                          <button
+                            onClick={() => setExpandedContentRow(expandedContentRow === i ? null : i)}
+                            style={{
+                              background: "none", border: "none", cursor: "pointer", padding: 0,
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              color: "var(--color-accent)", fontSize: "0.72rem", fontWeight: 600,
+                            }}
+                          >
+                            <Eye size={11} />
+                            {expandedContentRow === i ? "Hide" : "Edit"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandedContentRow === i && (
+                      <tr style={{ backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.04)" }}>
+                        <td colSpan={4} style={{ padding: "10px 14px 14px", borderBottom: "1px solid var(--color-card-border)" }}>
+                          <p style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Example</p>
+                          <InlineField
+                            value={item.example ?? ""}
+                            onChange={(v) => updateContentItem(i, "example", v)}
+                            placeholder="Example content…"
+                            extraStyle={{ fontSize: "0.82rem", lineHeight: 1.6 }}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
           </div>
           <SaveBar sectionKey="content" />
         </StrategySection>
@@ -1086,18 +1296,22 @@ function AIReStrategyPanel({ adId, onRewritten }) {
   const [error,        setError]        = useState(null);
   const [success,      setSuccess]      = useState(false);
   const [confirmed,    setConfirmed]    = useState(false);
+  const reProgress = useGenerateProgress();
 
   const run = async () => {
     if (!instructions.trim()) { setError("Instructions are required."); return; }
     if (!confirmed) { setError("Please confirm you want to replace the current strategy."); return; }
     setLoading(true); setError(null); setSuccess(false);
+    reProgress.start("Re-writing strategy…", 25000);
     try {
       await adsAPI.rewriteStrategy(adId, { instructions: instructions.trim() });
+      reProgress.complete();
       setSuccess(true);
       setInstructions("");
       setConfirmed(false);
       onRewritten();
     } catch (err) {
+      reProgress.fail();
       setError(err.message || "Re-strategy failed.");
     } finally {
       setLoading(false);
@@ -1163,15 +1377,18 @@ function AIReStrategyPanel({ adId, onRewritten }) {
         </div>
       )}
 
-      <button
-        onClick={run}
-        disabled={loading || !confirmed}
-        className="btn--accent"
-        style={{ display: "inline-flex", alignItems: "center", gap: 8, opacity: (loading || !confirmed) ? 0.6 : 1, cursor: (loading || !confirmed) ? "not-allowed" : "pointer" }}
-      >
-        {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={14} />}
-        {loading ? "Re-writing strategy… (15–30s)" : "Trigger AI Re-Strategy"}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={run}
+          disabled={loading || !confirmed}
+          className="btn--accent"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, opacity: (loading || !confirmed) ? 0.6 : 1, cursor: (loading || !confirmed) ? "not-allowed" : "pointer" }}
+        >
+          {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={14} />}
+          {loading ? "Re-writing strategy… (15–30s)" : "Trigger AI Re-Strategy"}
+        </button>
+        <InlineProgress progress={reProgress.progress} />
+      </div>
     </div>
   );
 }

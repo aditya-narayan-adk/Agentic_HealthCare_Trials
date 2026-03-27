@@ -195,6 +195,7 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, onSaved }) {
   const [saved_ok,  setSavedOk]   = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError,   setAiError]   = useState(null);
+  const qProgress = useGenerateProgress();
 
   // keep local state in sync when parent reloads
   useEffect(() => {
@@ -242,12 +243,15 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, onSaved }) {
 
   const generateWithAI = async () => {
     setAiLoading(true); setAiError(null);
+    qProgress.start("Generating questions…", 15000);
     try {
       const updated = await adsAPI.generateQuestionnaire(adId);
       const qs = updated.questionnaire?.questions ?? [];
       if (qs.length) setQuestions(qs);
+      qProgress.complete();
       if (onSaved) onSaved();
     } catch (err) {
+      qProgress.fail();
       setAiError(err.message || "AI questionnaire generation failed.");
     } finally {
       setAiLoading(false);
@@ -278,11 +282,16 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, onSaved }) {
             : <Sparkles size={14} />}
           {aiLoading ? "Generating…" : hasQuestions ? "Regenerate with AI" : "Generate with AI"}
         </button>
-        <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>
-          {hasQuestions
-            ? "Claude will replace the current questions based on campaign context and documents."
-            : "Claude will generate MCQ eligibility questions from your campaign brief and protocol documents."}
-        </p>
+        {aiLoading
+          ? <InlineProgress progress={qProgress.progress} />
+          : (
+            <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>
+              {hasQuestions
+                ? "Claude will replace the current questions based on campaign context and documents."
+                : "Claude will generate MCQ eligibility questions from your campaign brief and protocol documents."}
+            </p>
+          )
+        }
       </div>
 
       {aiError && (
@@ -738,6 +747,7 @@ function ContentPlanTable({ items }) {
     ...allKeys.filter(k => !PREFERRED_ORDER.includes(k)),
   ];
   const mainCols = cols.filter(k => k !== "example");
+  const COL_WIDTHS = { channel: "22%", format: "30%", frequency: "22%" };
 
   return (
     <div style={{ overflowX: "auto" }}>
@@ -747,6 +757,7 @@ function ContentPlanTable({ items }) {
             {mainCols.map(col => (
               <th key={col} style={{
                 padding: "6px 12px", textAlign: "left",
+                width: COL_WIDTHS[col],
                 fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase",
                 letterSpacing: "0.06em", color: "var(--color-sidebar-text)",
                 borderBottom: "1px solid var(--color-card-border)",
@@ -823,37 +834,85 @@ function ContentPlanTable({ items }) {
   );
 }
 
-function KpiGrid({ kpis }) {
+// ─── KPI bar chart (mirrors ReviewDetailPage) ────────────────────────────────
+
+const DONUT_PALETTE = [
+  "var(--color-accent)", "#6366f1", "#f59e0b", "#ec4899",
+  "#14b8a6", "#8b5cf6", "#f97316", "#0ea5e9",
+];
+
+function detectKpiCategory(text) {
+  const t = (text ?? "").toLowerCase();
+  if (/ctr|click.through|click.rate/.test(t))  return { label: "CTR",    color: "#6366f1" };
+  if (/cpa|cost.per.acq|cost per acq/.test(t)) return { label: "CPA",    color: "#f59e0b" };
+  if (/roas|return.on.ad/.test(t))             return { label: "ROAS",   color: "#14b8a6" };
+  if (/impression|reach|awareness/.test(t))    return { label: "REACH",  color: "#8b5cf6" };
+  if (/conversion|convert/.test(t))            return { label: "CVR",    color: "#ec4899" };
+  if (/engag/.test(t))                         return { label: "ENG",    color: "#f97316" };
+  if (/revenue|roi|return on invest/.test(t))  return { label: "ROI",    color: "#0ea5e9" };
+  if (/bounce/.test(t))                        return { label: "BOUNCE", color: "#ef4444" };
+  if (/open rate|email/.test(t))               return { label: "EMAIL",  color: "#22c55e" };
+  if (/lead/.test(t))                          return { label: "LEADS",  color: "#a78bfa" };
+  if (/view|video|watch/.test(t))              return { label: "VIDEO",  color: "#fb923c" };
+  return null;
+}
+
+function extractNumber(str) {
+  if (!str) return null;
+  const s = str.replace(/,/g, "");
+  const m = s.match(/(\d+(?:\.\d+)?)\s*([km×x]?)/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  const suf = m[2].toLowerCase();
+  if (suf === "k") n *= 1000;
+  else if (suf === "m") n *= 1_000_000;
+  return n;
+}
+
+function QuantKpiChart({ kpis }) {
+  const normalized = kpis.map(k =>
+    typeof k === "string" ? { metric: k, target: null, context: null } : k
+  );
+  const nums   = normalized.map(k => extractNumber(k.target) ?? 0);
+  const maxVal = Math.max(...nums, 1);
+  const BAR_MAX = 88, BAR_MIN = 28;
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "8px" }}>
-      {kpis.map((kpi, i) => {
-        // kpi may be a string "Label: description" or an object from the AI
-        const kpiStr = typeof kpi === "string" ? kpi : JSON.stringify(kpi);
-        const colonIdx = kpiStr.indexOf(":");
-        const [label, desc] = colonIdx !== -1
-          ? [kpiStr.slice(0, colonIdx).trim(), kpiStr.slice(colonIdx + 1).trim()]
-          : [kpiStr, ""];
-        return (
-          <div key={i} style={{
-            display: "flex", alignItems: "flex-start", gap: "8px",
-            padding: "8px 10px", borderRadius: "8px",
-            border: "1px solid var(--color-card-border)",
-            backgroundColor: "var(--color-card-bg)",
-          }}>
-            <Zap size={11} style={{ color: "var(--color-accent)", flexShrink: 0, marginTop: "3px" }} />
-            <div>
-              <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-input-text)", lineHeight: 1.4 }}>
-                {label}
-              </p>
-              {desc && (
-                <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", lineHeight: 1.4, marginTop: "2px" }}>
-                  {desc}
-                </p>
+    <div>
+      <div style={{
+        display: "flex", alignItems: "flex-end", gap: 10,
+        borderBottom: "2px solid var(--color-card-border)",
+      }}>
+        {normalized.map((k, i) => {
+          const cat   = detectKpiCategory(k.metric);
+          const color = cat?.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length];
+          const barH  = nums[i] === 0 ? BAR_MIN : BAR_MIN + ((nums[i] / maxVal) * (BAR_MAX - BAR_MIN));
+          return (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 800, color, letterSpacing: "0.02em" }}>{k.target}</span>
+              <div style={{
+                width: "100%", height: barH, borderRadius: "5px 5px 0 0",
+                background: `linear-gradient(180deg, ${color}dd 0%, ${color}55 100%)`,
+                transition: "height 0.45s ease",
+              }} />
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 10, paddingTop: 6 }}>
+        {normalized.map((k, i) => {
+          const cat   = detectKpiCategory(k.metric);
+          const color = cat?.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length];
+          return (
+            <div key={i} style={{ flex: 1, textAlign: "center" }}>
+              <p style={{ fontSize: "0.72rem", fontWeight: 700, color, margin: 0 }}>{k.metric}</p>
+              {k.context && (
+                <p style={{ fontSize: "0.6rem", color: "var(--color-sidebar-text)", margin: "2px 0 0", lineHeight: 1.3 }}>{k.context}</p>
               )}
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -883,6 +942,67 @@ function BudgetBar({ budgetData }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function DonutChart({ slices, size = 150, thickness = 26 }) {
+  const r    = (size - thickness) / 2;
+  const circ = 2 * Math.PI * r;
+  const cx   = size / 2, cy = size / 2;
+  let acc = 0;
+  return (
+    <svg width={size} height={size}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-card-border)" strokeWidth={thickness} />
+      {slices.map((slice, i) => {
+        const arc    = (slice.pct / 100) * circ;
+        const offset = -(acc / 100) * circ;
+        acc += slice.pct;
+        return (
+          <circle
+            key={i} cx={cx} cy={cy} r={r}
+            fill="none" stroke={slice.color} strokeWidth={thickness}
+            strokeDasharray={`${arc} ${circ}`}
+            strokeDashoffset={offset}
+            transform={`rotate(-90 ${cx} ${cy})`}
+            style={{ transition: "stroke-dasharray 0.4s ease" }}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+function BudgetDonut({ strategy }) {
+  if (!strategy?.budget_allocation) return null;
+  const entries = Object.entries(strategy.budget_allocation);
+  if (!entries.length) return null;
+  const slices = entries.map(([label, val], i) => ({
+    label,
+    pct: parseFloat(String(val)) || 0,
+    color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+  }));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "4px 0" }}>
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <DonutChart slices={slices} />
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <DollarSign size={16} style={{ color: "var(--color-accent)" }} />
+        </div>
+      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 7 }}>
+        {slices.map((s) => (
+          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 9, height: 9, borderRadius: 2, backgroundColor: s.color, flexShrink: 0 }} />
+            <p style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-input-text)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>
+              {s.label}
+            </p>
+            <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--color-input-text)", flexShrink: 0, margin: 0 }}>
+              {s.pct}%
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -974,7 +1094,7 @@ function StrategyViewer({ strategy }) {
                 </p>
               </div>
               <div style={{ padding: "12px 14px" }}>
-                <KpiGrid kpis={kpis} />
+                <QuantKpiChart kpis={kpis} />
               </div>
             </div>
           )}
@@ -1251,12 +1371,36 @@ function ReviewPanel({ adId, onSubmitted }) {
 
 // ─── Review card ──────────────────────────────────────────────────────────────
 function ReviewCard({ review }) {
+  const isSystem = review.review_type === "system" || review.is_system;
   const statusColor = {
     approved: "var(--color-success)",
     rejected: "#ef4444",
     revision: "#f59e0b",
     pending:  "var(--color-sidebar-text)",
   }[review.status] ?? "var(--color-sidebar-text)";
+
+  if (isSystem) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: 10,
+        padding: "10px 14px", borderRadius: 8,
+        border: "1px dashed var(--color-card-border)",
+        backgroundColor: "var(--color-page-bg)",
+      }}>
+        <RefreshCw size={13} style={{ color: "var(--color-sidebar-text)", flexShrink: 0, marginTop: 2 }} />
+        <div>
+          <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", lineHeight: 1.6, fontStyle: "italic" }}>
+            {review.comments}
+          </p>
+          {review.created_at && (
+            <p style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
+              {new Date(review.created_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -1484,10 +1628,12 @@ class DetailErrorBoundary extends Component {
 
 // ─── Page-level tabs ──────────────────────────────────────────────────────────
 const PAGE_TABS = [
-  { key: "overview",  label: "Overview",  icon: LayoutDashboard },
-  { key: "strategy",  label: "Strategy",  icon: Layers          },
-  { key: "review",    label: "Review",    icon: ClipboardCheck  },
-  { key: "publish",   label: "Publish",   icon: Zap             },
+  { key: "overview",      label: "Overview",      icon: LayoutDashboard },
+  { key: "strategy",      label: "Strategy",      icon: Layers          },
+  { key: "questionnaire", label: "Questionnaire", icon: ClipboardList   },
+  { key: "review",        label: "Review",        icon: ClipboardCheck  },
+  { key: "history",       label: "History",       icon: History         },
+  { key: "publish",       label: "Publish",       icon: Zap             },
 ];
 
 function PageTabBar({ active, onChange, showQuestionnaireDot }) {
@@ -1498,7 +1644,7 @@ function PageTabBar({ active, onChange, showQuestionnaireDot }) {
     }}>
       {PAGE_TABS.map(({ key, label, icon: Icon }) => {
         const isActive = active === key;
-        const hasDot   = key === "overview" && showQuestionnaireDot;
+        const hasDot   = key === "questionnaire" && showQuestionnaireDot;
         return (
           <button
             key={key}
@@ -1905,67 +2051,95 @@ function CampaignDetailPageInner() {
             </div>
           </SectionCard>
 
-          <SectionCard
-            title="Protocol Documents"
-            subtitle={protoDocs.length === 0 ? "No documents attached" : `${protoDocs.length} document${protoDocs.length > 1 ? "s" : ""} attached`}
-          >
-            {protoDocs.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "24px 0" }}>
-                <FileText size={28} style={{ color: "var(--color-sidebar-text)", margin: "0 auto 8px", opacity: 0.5 }} />
-                <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)" }}>No protocol documents were uploaded for this campaign.</p>
+          {/* Protocol Docs + Budget Distribution — 2-col when both exist */}
+          {(() => {
+            const hasBudget = !!(ad.strategy_json?.budget_allocation && Object.keys(ad.strategy_json.budget_allocation).length > 0);
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: hasBudget ? "1fr 1fr" : "1fr", gap: 16, alignItems: "start" }}>
+                <SectionCard
+                  title="Protocol Documents"
+                  subtitle={protoDocs.length === 0 ? "No documents attached" : `${protoDocs.length} document${protoDocs.length > 1 ? "s" : ""} attached`}
+                >
+                  {protoDocs.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "24px 0" }}>
+                      <FileText size={28} style={{ color: "var(--color-sidebar-text)", margin: "0 auto 8px", opacity: 0.5 }} />
+                      <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)" }}>No protocol documents were uploaded for this campaign.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {protoDocs.map((doc) => (
+                        <div
+                          key={doc.id}
+                          onClick={() => doc.file_path && setPreviewDoc(doc)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px",
+                            borderRadius: "8px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
+                            cursor: doc.file_path ? "pointer" : "default", transition: "border-color 0.15s",
+                          }}
+                          onMouseEnter={(e) => { if (doc.file_path) e.currentTarget.style.borderColor = "var(--color-accent)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--color-card-border)"; }}
+                        >
+                          <div style={{ width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <FileText size={14} style={{ color: "var(--color-accent)" }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.title}</p>
+                            <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                              {doc.doc_type?.replace(/_/g, " ")}{doc.file_path && ` · ${doc.file_path.split("/").pop()}`}
+                            </p>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                            {doc.priority && (
+                              <span style={{ fontSize: "0.65rem", fontWeight: 600, padding: "2px 6px", borderRadius: "4px", backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)", color: "var(--color-accent)", border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)" }}>
+                                Priority {doc.priority}
+                              </span>
+                            )}
+                            {doc.file_path && <Eye size={13} style={{ color: "var(--color-sidebar-text)" }} />}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+                {hasBudget && (
+                  <SectionCard title="Budget Distribution">
+                    <BudgetDonut strategy={ad.strategy_json} />
+                  </SectionCard>
+                )}
               </div>
-            ) : (
-              <div className="space-y-2">
-                {protoDocs.map((doc) => (
-                  <div
-                    key={doc.id}
-                    onClick={() => doc.file_path && setPreviewDoc(doc)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px",
-                      borderRadius: "8px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
-                      cursor: doc.file_path ? "pointer" : "default", transition: "border-color 0.15s",
-                    }}
-                    onMouseEnter={(e) => { if (doc.file_path) e.currentTarget.style.borderColor = "var(--color-accent)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--color-card-border)"; }}
-                  >
-                    <div style={{ width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <FileText size={14} style={{ color: "var(--color-accent)" }} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.title}</p>
-                      <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
-                        {doc.doc_type?.replace(/_/g, " ")}{doc.file_path && ` · ${doc.file_path.split("/").pop()}`}
-                      </p>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                      {doc.priority && (
-                        <span style={{ fontSize: "0.65rem", fontWeight: 600, padding: "2px 6px", borderRadius: "4px", backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)", color: "var(--color-accent)", border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)" }}>
-                          Priority {doc.priority}
-                        </span>
-                      )}
-                      {doc.file_path && (
-                        <Eye size={13} style={{ color: "var(--color-sidebar-text)" }} />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionCard>
+            );
+          })()}
 
-          {/* Questionnaire callout / builder */}
+          {/* Questionnaire callout */}
           {qualifies && (
-            <SectionCard
-              title="Questionnaire"
-              subtitle={`${ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Detected from campaign title"} — define the questions participants will answer`}
+            <div
+              onClick={() => setPageTab("questionnaire")}
+              style={{
+                display: "flex", alignItems: "center", gap: 14,
+                padding: "18px 22px", borderRadius: 12, cursor: "pointer",
+                border: questEmpty ? "1px solid rgba(245,158,11,0.4)" : "1px solid var(--color-card-border)",
+                backgroundColor: questEmpty ? "rgba(245,158,11,0.05)" : "var(--color-card-bg)",
+                transition: "border-color 0.15s",
+              }}
             >
-              <QuestionnaireSection
-                adId={id}
-                questionnaire={ad.questionnaire}
-                readOnly={false}
-                onSaved={load}
-              />
-            </SectionCard>
+              <div style={{
+                width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                backgroundColor: questEmpty ? "rgba(245,158,11,0.12)" : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+              }}>
+                <ClipboardList size={18} style={{ color: questEmpty ? "#f59e0b" : "var(--color-accent)" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-input-text)", margin: 0 }}>
+                  Eligibility Questionnaire
+                  {questEmpty && <span style={{ marginLeft: 8, fontSize: "0.72rem", fontWeight: 600, color: "#f59e0b" }}>· Needs setup</span>}
+                </p>
+                <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)", marginTop: 3 }}>
+                  {questEmpty ? "No questions yet — click to set up" : `${ad.questionnaire.questions.length} question${ad.questionnaire.questions.length !== 1 ? "s" : ""} ready`}
+                </p>
+              </div>
+              <ArrowLeft size={14} style={{ color: "var(--color-sidebar-text)", transform: "rotate(180deg)" }} />
+            </div>
           )}
 
         </div>
@@ -2125,6 +2299,35 @@ function CampaignDetailPageInner() {
         </div>
       )}
 
+      {/* ══ QUESTIONNAIRE tab ═════════════════════════════════════════════════ */}
+      {pageTab === "questionnaire" && (
+        <div>
+          {qualifies ? (
+            <>
+              <div style={{ marginBottom: 20 }}>
+                <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-input-text)", margin: 0 }}>
+                  Eligibility Questionnaire
+                </h2>
+                <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
+                  {ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Detected from campaign title"} — define the questions participants will answer
+                </p>
+              </div>
+              <QuestionnaireSection
+                adId={id}
+                questionnaire={ad.questionnaire}
+                readOnly={false}
+                onSaved={load}
+              />
+            </>
+          ) : (
+            <div style={{ textAlign: "center", padding: "48px 0" }}>
+              <ClipboardList size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
+              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>This campaign type does not require a questionnaire.</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ══ REVIEW tab ════════════════════════════════════════════════════════ */}
       {pageTab === "review" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -2135,17 +2338,6 @@ function CampaignDetailPageInner() {
               subtitle="Add your human review — approve, request revisions, or flag ethical concerns"
             >
               <ReviewPanel adId={id} onSubmitted={handleReviewSubmitted} />
-            </SectionCard>
-          )}
-
-          {hasReviews && reviews.length > 0 && (
-            <SectionCard
-              title="Review History"
-              subtitle={`${reviews.length} review${reviews.length !== 1 ? "s" : ""} on record`}
-            >
-              <div className="space-y-3">
-                {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
-              </div>
             </SectionCard>
           )}
 
@@ -2186,7 +2378,7 @@ function CampaignDetailPageInner() {
             </SectionCard>
           )}
 
-          {!canReview && !hasReviews && !(ad.website_reqs || ad.ad_details) && (
+          {!canReview && !(ad.website_reqs || ad.ad_details) && (
             <div style={{ textAlign: "center", padding: "48px 0" }}>
               <ClipboardCheck size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
               <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>
@@ -2195,6 +2387,27 @@ function CampaignDetailPageInner() {
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* ══ HISTORY tab ═══════════════════════════════════════════════════════ */}
+      {pageTab === "history" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {reviews.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "48px 0" }}>
+              <History size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
+              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>No review history yet.</p>
+            </div>
+          ) : (
+            <SectionCard
+              title="Review History"
+              subtitle={`${reviews.length} entr${reviews.length !== 1 ? "ies" : "y"} on record`}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {reviews.map((r) => <ReviewCard key={r.id} review={r} />)}
+              </div>
+            </SectionCard>
+          )}
         </div>
       )}
 
