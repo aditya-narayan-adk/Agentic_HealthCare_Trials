@@ -607,7 +607,7 @@ function VoicebotConfig({ ad }) {
           disabled={recommending || !ad.strategy_json}
           className="btn--inline-action--accent"
           style={{ width: "100%", justifyContent: "center", gap: 6, fontSize: "0.83rem", padding: "9px 0" }}
-          title={!ad.strategy_json ? "Generate a campaign strategy first to enable AI recommendations" : ""}
+          title={!ad.strategy_json ? "Generate a campaign strategy first to enable voice recommendations" : ""}
         >
           {recommending
             ? <><div className="spinner" style={{ width: 11, height: 11 }} /> Analyzing audience…</>
@@ -615,7 +615,7 @@ function VoicebotConfig({ ad }) {
         </button>
         {!ad.strategy_json && (
           <p style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginTop: 4, textAlign: "center" }}>
-            Generate a campaign strategy first to unlock AI voice recommendations.
+            Generate a campaign strategy first to unlock voice recommendations.
           </p>
         )}
 

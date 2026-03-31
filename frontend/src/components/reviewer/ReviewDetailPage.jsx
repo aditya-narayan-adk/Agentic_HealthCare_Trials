@@ -491,7 +491,7 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
           style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: (aiLoading || saving) ? 0.7 : 1 }}
         >
           {aiLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={13} />}
-          {aiLoading ? "Generating…" : questions.length ? "Regenerate with AI" : "Generate with AI"}
+          {aiLoading ? "Generating…" : questions.length ? "Regenerate Questions" : "Generate Questions"}
         </button>
         <InlineProgress progress={qProgress.progress} />
 
@@ -524,7 +524,7 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated }) {
       {/* Empty state */}
       {!questions.length && !aiLoading && (
         <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", fontStyle: "italic" }}>
-          No questions yet — click "Generate with AI" above.
+          No questions yet — click "Generate Questions" above.
         </p>
       )}
 
@@ -1333,13 +1333,13 @@ function AIReStrategyPanel({ adId, onRewritten }) {
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 8, backgroundColor: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.3)" }}>
         <Sparkles size={14} style={{ color: "#f59e0b", flexShrink: 0, marginTop: 2 }} />
         <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", lineHeight: 1.5 }}>
-          This will instruct Claude to <strong style={{ color: "var(--color-input-text)" }}>replace the entire strategy from scratch</strong> using your instructions as guidance. The current strategy will be overwritten. This action is recorded in the audit trail.
+          This will <strong style={{ color: "var(--color-input-text)" }}>replace the entire strategy from scratch</strong> using your instructions as guidance. The current strategy will be overwritten. This action is recorded in the audit trail.
         </p>
       </div>
 
       {/* Instructions textarea */}
       <div>
-        <label style={labelStyle}>Your Instructions for Claude *</label>
+        <label style={labelStyle}>Your Instructions *</label>
         <textarea
           style={textStyle}
           value={instructions}
@@ -1347,7 +1347,7 @@ function AIReStrategyPanel({ adId, onRewritten }) {
           placeholder="e.g. The current strategy over-indexes on social media. Refocus on B2B channels like LinkedIn and email with a thought-leadership angle. Reduce influencer budget to under 10%. Keep the same target audience but adjust messaging tone to be more professional."
         />
         <p style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
-          Be as specific as possible — Claude will use the original campaign brief plus your instructions to generate a new strategy.
+          Be as specific as possible — the original campaign brief plus your instructions will be used to generate a new strategy.
         </p>
       </div>
 
@@ -1783,7 +1783,7 @@ export default function ReviewerCampaignDetail() {
                 <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
                   {ad.questionnaire?.questions?.length
                     ? `${ad.questionnaire.questions.length} question${ad.questionnaire.questions.length !== 1 ? "s" : ""} · edit wording or regenerate below`
-                    : "No questions yet — generate with AI to get started"
+                    : "No questions yet — generate to get started"
                   }
                 </p>
               </div>

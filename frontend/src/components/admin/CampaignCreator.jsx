@@ -1189,8 +1189,8 @@ export default function CampaignCreator() {
               <h2 style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--color-input-text)" }}>{createdAd.title}</h2>
               <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
                 Campaign created with: <strong>{createdAd.ad_type?.join(", ")}</strong>.
-                {form.protocol_docs.length > 0 && <> <strong>{form.protocol_docs.length} protocol document{form.protocol_docs.length > 1 ? "s" : ""}</strong> attached as AI context.</>}
-                {" "}Generate an AI marketing strategy and submit for review?
+                {form.protocol_docs.length > 0 && <> <strong>{form.protocol_docs.length} protocol document{form.protocol_docs.length > 1 ? "s" : ""}</strong> attached.</>}
+                {" "}Generate a marketing strategy and submit for review?
               </p>
               <p className="text-xs" style={{ color: "var(--color-sidebar-text)", opacity: 0.6 }}>You can navigate away — generation runs in the background.</p>
               <button onClick={handleGenerate} className="btn--accent px-8 py-2.5">

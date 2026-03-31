@@ -1386,7 +1386,7 @@ export default function MyCompany() {
       {/* ── AI Skills (admin only) ─────────────────────────────────────────── */}
       {role === "study_coordinator" && (
         <SectionCard
-          title="AI Skills"
+          title="Skills"
           subtitle="Retrain the Curator & Reviewer skills against your current documents. Run this after adding documents or when a system template update is released."
           style={{ marginTop: 32 }}
         >
@@ -1400,7 +1400,7 @@ export default function MyCompany() {
               {retraining
                 ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                 : <Sparkles size={14} />}
-              {retraining ? "Retraining…" : "Retrain AI Skills"}
+              {retraining ? "Retraining…" : "Retrain Skills"}
             </button>
 
             {retrainOk && !retraining && (

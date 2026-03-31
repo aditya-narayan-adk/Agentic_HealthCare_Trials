@@ -27,11 +27,11 @@ export default function AITrainingStep({ loading, trainingDone, onTrain, onBack,
       {/* Copy */}
       <div>
         <h2 className="text-xl font-bold" style={{ color: "var(--color-input-text)" }}>
-          AI Skill Initialization
+          System Initialization
         </h2>
         <p className="text-sm mt-2 max-w-sm mx-auto" style={{ color: "var(--color-sidebar-text)" }}>
           Reads Curator and Reviewer skill templates, fills them with your company data,
-          and generates customized AI skills for your marketing pipeline.
+          and configures your marketing pipeline.
         </p>
       </div>
 
@@ -40,7 +40,7 @@ export default function AITrainingStep({ loading, trainingDone, onTrain, onBack,
         <div className="space-y-3">
           <button onClick={onTrain} disabled={loading} className="btn--accent px-8 py-3">
             {loading
-              ? <><span className="spinner" /> Training AI Skills…</>
+              ? <><span className="spinner" /> Initializing…</>
               : "Start Training"
             }
           </button>
