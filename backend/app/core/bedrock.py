@@ -57,3 +57,8 @@ def get_async_client():
 def get_model() -> str:
     """Return the correct model ID for the active backend."""
     return settings.BEDROCK_MODEL if settings.USE_BEDROCK else settings.ANTHROPIC_MODEL
+
+
+def get_curator_model() -> str:
+    """Return Opus 4.6 model ID — used exclusively for ad strategy generation."""
+    return settings.BEDROCK_CURATOR_MODEL if settings.USE_BEDROCK else settings.ANTHROPIC_CURATOR_MODEL

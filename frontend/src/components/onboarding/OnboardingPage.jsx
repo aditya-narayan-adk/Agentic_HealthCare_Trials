@@ -121,17 +121,19 @@ export default function OnboardingPage() {
     setShowSignIn(false);
     try {
       // 1. Register company + admin.
-      //    Backend returns 409 with detail "company_exists" or "email_exists"
-      //    for duplicates — both are handled below in the catch block.
-      const registerRes = await onboardingAPI.register({
-        company_name:   form.company_name,
-        industry:       form.industry,
-        logo_url:       null,
-        admin_email:    form.admin_email,
-        admin_password: form.admin_password,
-        admin_name:     form.admin_name,
-      });
-      setCompanyId(registerRes.company_id);
+      //    If companyId is already set (retry after a failed training attempt),
+      //    skip registration and go straight to login.
+      if (!companyId) {
+        const registerRes = await onboardingAPI.register({
+          company_name:   form.company_name,
+          industry:       form.industry,
+          logo_url:       null,
+          admin_email:    form.admin_email,
+          admin_password: form.admin_password,
+          admin_name:     form.admin_name,
+        });
+        setCompanyId(registerRes.company_id);
+      }
 
       // 2. Login — backend verifies company name and role.
       const loginRes = await authAPI.login(
@@ -153,45 +155,65 @@ export default function OnboardingPage() {
         companyName:     loginRes.company_name,
         companyIndustry: form.industry || null,
         token:           loginRes.access_token,
+        onboarded:       false, // will be updated to true after training succeeds below
       });
 
       // 5. Upload logo — token is now in localStorage so auth header is set.
-      if (logoFile) {
+      //    Skipped on retry (logo was already uploaded in the first attempt).
+      if (logoFile && !companyId) {
         await onboardingAPI.uploadLogo(logoFile);
       }
 
       // 6. Upload documents one by one.
-      for (const doc of docs) {
-        await onboardingAPI.uploadDocument(
-          doc.doc_type,
-          doc.title,
-          null,
-          doc.file,
-        );
+      //    Skipped on retry — documents were already uploaded.
+      if (!companyId) {
+        for (const doc of docs) {
+          await onboardingAPI.uploadDocument(
+            doc.doc_type,
+            doc.title,
+            null,
+            doc.file,
+          );
+        }
       }
 
       // 7. Create brand kit — only if the user made a selection or uploaded a PDF.
       //    If the user skipped, all color fields are null and there is nothing
       //    meaningful to save, so we skip the API call entirely and leave the
       //    platform running on its default theme.
-      const hasBrandData = brand.primaryColor || brand.accentColor || brandPdfFile || selectedPreset;
-      if (hasBrandData) {
-        const createdBrandKit = await brandKitAPI.create({
-          primary_color:   brand.primaryColor,
-          secondary_color: brand.secondaryColor,
-          accent_color:    brand.accentColor,
-          primary_font:    brand.primaryFont,
-          secondary_font:  brand.secondaryFont,
-          adjectives:      brand.adjectives || null,
-          dos:             brand.dos || null,
-          donts:           brand.donts || null,
-          preset_name:     selectedPreset || null,
-        });
-        applyBrandTheme(createdBrandKit);
+      //    Skipped on retry — brand kit was already created.
+      if (!companyId) {
+        const hasBrandData = brand.primaryColor || brand.accentColor || brandPdfFile || selectedPreset;
+        if (hasBrandData) {
+          const createdBrandKit = await brandKitAPI.create({
+            primary_color:   brand.primaryColor,
+            secondary_color: brand.secondaryColor,
+            accent_color:    brand.accentColor,
+            primary_font:    brand.primaryFont,
+            secondary_font:  brand.secondaryFont,
+            adjectives:      brand.adjectives || null,
+            dos:             brand.dos || null,
+            donts:           brand.donts || null,
+            preset_name:     selectedPreset || null,
+          });
+          applyBrandTheme(createdBrandKit);
+        }
       }
 
       // 8. Trigger AI skill initialization — generates customized Curator + Reviewer skills.
+      //    This is the step that gates account activation. Always run on every attempt.
       await onboardingAPI.triggerTraining();
+
+      // Mark onboarded in context so ProtectedRoute allows dashboard access.
+      hydrateUser({
+        id:              loginRes.user_id,
+        role:            loginRes.role,
+        companyId:       loginRes.company_id,
+        companyName:     loginRes.company_name,
+        companyIndustry: form.industry || null,
+        token:           loginRes.access_token,
+        onboarded:       true,
+      });
 
       setTrainingDone(true);
     } catch (err) {

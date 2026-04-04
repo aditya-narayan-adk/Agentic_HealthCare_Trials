@@ -493,7 +493,7 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated, role }) {
 
   const inputBase = {
     width: "100%", padding: "6px 10px", borderRadius: "7px", fontSize: "0.83rem",
-    border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
+    border: "1.5px solid var(--color-input-border)", backgroundColor: "var(--color-input-bg)",
     color: "var(--color-input-text)", outline: "none", boxSizing: "border-box",
     fontFamily: "inherit",
   };
@@ -553,7 +553,7 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated, role }) {
         const rw = rewriteStates[q.id] ?? {};
         return (
         <div key={q.id ?? qi} style={{
-          borderRadius: "10px", border: "1px solid var(--color-card-border)",
+          borderRadius: "10px", border: "1.5px solid var(--color-input-border)",
           backgroundColor: "var(--color-card-bg)", overflow: "hidden",
         }}>
           {/* Question header */}
@@ -580,14 +580,14 @@ function QuestionnaireViewer({ questionnaire, adId, onGenerated, role }) {
                 title="Rewrite this question with AI"
                 style={{
                   flexShrink: 0, background: rw.open ? "var(--color-accent-subtle)" : "none",
-                  border: `1px solid ${rw.open ? "var(--color-accent)" : "var(--color-card-border)"}`,
+                  border: `1.5px solid ${rw.open ? "var(--color-accent)" : "var(--color-card-border)"}`,
                   borderRadius: "7px", padding: "5px 9px", cursor: "pointer",
                   display: "inline-flex", alignItems: "center", gap: 5,
                   color: rw.open ? "var(--color-accent)" : "var(--color-sidebar-text)",
                   fontSize: "0.72rem", fontWeight: 600,
                 }}
               >
-                <Sparkles size={12} /> AI
+                <Sparkles size={13} style={{ color: rw.open ? "var(--color-accent)" : "#6b7280" }} />
               </button>
             )}
             <span style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)", flexShrink: 0, whiteSpace: "nowrap" }}>

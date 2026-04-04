@@ -54,6 +54,7 @@ export function AuthProvider({ children }) {
       companyName: data.company_name,
       companyIndustry: data.company_industry || null,
       token: data.access_token,
+      onboarded: data.onboarded ?? false,
     };
     localStorage.setItem("token", data.access_token);
     localStorage.setItem("user", JSON.stringify(userData));
@@ -98,6 +99,7 @@ export function AuthProvider({ children }) {
     companyId: user?.companyId,
     companyName: user?.companyName,
     companyIndustry: user?.companyIndustry || null,
+    onboarded: user?.onboarded ?? true,  // default true for sessions predating this field
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

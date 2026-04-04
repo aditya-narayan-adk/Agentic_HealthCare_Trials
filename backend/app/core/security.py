@@ -8,7 +8,7 @@ JWT-based auth with role-based access control (RBAC).
 
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -17,7 +17,10 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.models import User, UserRole
+from app.models.models import User, UserRole, Company
+
+# Routes that authenticated-but-not-yet-onboarded users are allowed to call.
+_ONBOARDING_PREFIXES = ("/api/onboarding", "/api/auth", "/api/health", "/api/brand-kit")
 
 # ─── Password hashing ────────────────────────────────────────────────────────
 
@@ -56,6 +59,7 @@ def decode_token(token: str) -> dict:
 # ─── Dependency: get current user ─────────────────────────────────────────────
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -63,11 +67,23 @@ async def get_current_user(
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
-    
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    # Block access to all non-onboarding routes until the company finishes setup.
+    path = request.url.path
+    if not any(path.startswith(p) for p in _ONBOARDING_PREFIXES):
+        company_result = await db.execute(select(Company).where(Company.id == user.company_id))
+        company = company_result.scalar_one_or_none()
+        if company and not company.onboarded:
+            raise HTTPException(
+                status_code=403,
+                detail="onboarding_incomplete",
+            )
+
     return user
 
 

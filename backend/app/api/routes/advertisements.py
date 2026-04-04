@@ -13,6 +13,7 @@ Protocol documents (campaign-specific) are stored separately from company docume
 """
 
 import asyncio
+import logging
 import os
 import mimetypes
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
@@ -40,6 +41,7 @@ from app.services.storage import file_storage
 from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 
 router = APIRouter(prefix="/advertisements", tags=["Advertisements"])
+logger = logging.getLogger(__name__)
 
 ALLOWED_PROTOCOL_TYPES = {
     "application/pdf",
@@ -168,6 +170,9 @@ async def generate_questionnaire(
         questionnaire = await curator.generate_questionnaire(ad, all_docs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Questionnaire generation failed for ad %s: %s", ad_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Questionnaire generation failed: {e}")
 
     ad.questionnaire = questionnaire
     return ad
@@ -333,10 +338,34 @@ async def generate_strategy(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Strategy generation failed for ad %s: %s", ad_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Strategy generation failed: {e}")
 
     ad.strategy_json = strategy
     ad.questionnaire = questionnaire
     ad.status = AdStatus.STRATEGY_CREATED
+
+    # For voicebot campaigns, auto-populate a voice recommendation so the
+    # Voicebot tab arrives pre-configured. Uses setdefault so it never
+    # overwrites values the publisher already saved manually.
+    if "voicebot" in (ad.ad_type or []):
+        await db.flush()  # make strategy visible to the service's DB query
+        try:
+            vb_svc = VoicebotAgentService(db)
+            rec = await vb_svc.recommend_voice(ad_id)
+            cfg = dict(ad.bot_config or {})
+            cfg.setdefault("voice_id",           rec["voice_id"])
+            cfg.setdefault("conversation_style", rec["conversation_style"])
+            cfg.setdefault("first_message",      rec["first_message"])
+            # Store the explanation so the UI can surface it
+            cfg["_voice_rec"] = {
+                "voice_name": rec["voice_name"],
+                "reason":     rec["reason"],
+            }
+            ad.bot_config = cfg
+        except Exception as _ve:
+            logger.warning("Voice recommendation skipped for ad %s: %s", ad_id, _ve)
 
     return ad
 
@@ -477,9 +506,14 @@ async def generate_creatives(
     try:
         creatives = await svc.generate_creatives(ad)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Creative generation failed for ad %s: %s", ad_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Creative generation failed: {exc}")
 
+    from sqlalchemy.orm.attributes import flag_modified
     ad.output_files = creatives
+    flag_modified(ad, "output_files")
+    await db.commit()
+    await db.refresh(ad)
     return ad
 
 
@@ -625,7 +659,8 @@ async def generate_website(
     try:
         url = await svc.generate_website(ad, brand_kit, company)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Website generation failed for ad %s: %s", ad_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Website generation failed: {exc}")
 
     ad.output_url = url
     return ad
@@ -778,6 +813,9 @@ async def rewrite_strategy(
         strategy = await curator.generate_strategy(ad, all_docs, extra_instructions=body.instructions)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Rewrite strategy failed for ad %s: %s", ad_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Strategy rewrite failed: {e}")
 
     ad.strategy_json = strategy
     ad.status = AdStatus.STRATEGY_CREATED

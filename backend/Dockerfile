@@ -2,15 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY backend/ .
+COPY skills/ /skills/
 
 # Run as non-root user
 RUN useradd -m -u 1001 appuser \
     && mkdir -p /app/uploads /app/outputs /app/static /db \
-    && chown -R appuser:appuser /app /db
+    && chown -R appuser:appuser /app /db /skills
 USER appuser
 
 EXPOSE 8000

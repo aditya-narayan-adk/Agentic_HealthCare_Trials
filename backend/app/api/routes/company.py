@@ -5,15 +5,15 @@ GET  /company/profile   — Return company info (name, industry, locations)
 PATCH /company/locations — Update operating locations
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from typing import List, Optional
 from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.models.models import User, Company, UserRole
-from app.core.security import require_roles
+from app.core.security import require_roles, verify_password
 
 router = APIRouter(prefix="/company", tags=["Company"])
 
@@ -32,6 +32,10 @@ class CompanyProfile(BaseModel):
 
 class LocationsUpdate(BaseModel):
     locations: List[LocationEntry]
+
+
+class DeleteAccountRequest(BaseModel):
+    password: str
 
 
 @router.get("/profile", response_model=CompanyProfile)
@@ -68,3 +72,30 @@ async def update_locations(
         industry=company.industry,
         locations=body.locations,
     )
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    body: DeleteAccountRequest,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Permanently delete the company and all associated data.
+    Requires the study coordinator's current password for confirmation.
+    Cascade deletes handle users, documents, campaigns, brand kit, skills, etc.
+    """
+    if not verify_password(body.password, user.hashed_pw):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password. Account not deleted.",
+        )
+
+    result = await db.execute(select(Company).where(Company.id == user.company_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    await db.delete(company)
+    # flush so cascade deletes run before commit
+    await db.flush()

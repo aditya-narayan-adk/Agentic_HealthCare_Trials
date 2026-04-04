@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.models import Advertisement, CompanyDocument, SkillConfig, DocumentType
-from app.core.bedrock import get_async_client, get_model, is_configured
+from app.core.bedrock import get_async_client, get_model, get_curator_model, is_configured
 
 _SKILLS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "skills", "templates")
@@ -160,13 +160,14 @@ Respond ONLY with the JSON object, no additional text.
         return "\n\n".join(sections)
 
     async def _call_claude(self, system_prompt: str, user_message: str) -> Dict[str, Any]:
-        """Call Claude (direct API or Bedrock) with the skill as system prompt."""
+        """Call Claude Opus 4.6 (direct API or Bedrock) with the skill as system prompt.
+        Uses get_curator_model() so strategy generation always runs on Opus 4.6."""
         if not is_configured():
             return self._mock_strategy()
 
         client   = get_async_client()
         response = await client.messages.create(
-            model=get_model(),
+            model=get_curator_model(),
             max_tokens=4096,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
@@ -334,4 +335,36 @@ Return ONLY the updated question JSON object (no array, no extra text):
                 {"metric": "ROAS",            "target": "3×",     "context": "across all channels"},
             ],
             "budget_breakdown": {"creative": 0.3, "media_buy": 0.5, "tools": 0.1, "contingency": 0.1},
+            "social_content": {
+                "Meta/Instagram": {
+                    "caption": "Ready to elevate your experience? Our latest campaign brings innovation and reliability straight to you. Discover what sets us apart — tap the link in bio to learn more.",
+                    "hashtags": "#innovation #healthcare #wellness #growth #reliability #campaign #health #lifestyle #brandnew #explore",
+                    "launch_schedule": {
+                        "recommended_window": "Week 1 of Q2 2025",
+                        "best_days": "Tue, Thu",
+                        "best_time": "7:00–9:00 AM local",
+                        "rationale": "Health-conscious audience most engaged during morning routine on weekdays",
+                    },
+                },
+                "LinkedIn": {
+                    "caption": "We're proud to announce our latest initiative focused on innovation and professional growth. Explore how our approach is reshaping the industry — and why it matters for your team.",
+                    "hashtags": "#innovation #professionaldev #healthcare #leadership #growth #B2B #industrynews",
+                    "launch_schedule": {
+                        "recommended_window": "Week 2 of Q2 2025",
+                        "best_days": "Mon, Wed",
+                        "best_time": "8:00–10:00 AM local",
+                        "rationale": "B2B professionals peak engagement during work-start hours mid-week",
+                    },
+                },
+                "Google Ads": {
+                    "caption": "Elevate your experience with a trusted, innovative solution. Get started today and see results that matter.",
+                    "hashtags": "",
+                    "launch_schedule": {
+                        "recommended_window": "Week 1 of Q2 2025",
+                        "best_days": "Mon–Fri",
+                        "best_time": "9:00 AM–12:00 PM local",
+                        "rationale": "Search intent highest during morning work hours across all weekdays",
+                    },
+                },
+            },
         }

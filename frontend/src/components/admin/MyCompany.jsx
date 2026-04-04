@@ -1167,7 +1167,7 @@ function BrandKitPanel() {
 
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function MyCompany() {
-  const { role } = useAuth();
+  const { role, logout } = useAuth();
   const [docs,          setDocs]          = useState([]);
   const [filter,        setFilter]        = useState("");
   const [mode,          setMode]          = useState(null);   // null | "add" | "edit"
@@ -1177,6 +1177,25 @@ export default function MyCompany() {
   const [retraining,    setRetraining]    = useState(false);
   const [retrainOk,     setRetrainOk]     = useState(false);
   const [retrainErr,    setRetrainErr]    = useState(null);
+
+  // ── Delete account ────────────────────────────────────────────────────────
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword,  setDeletePassword]  = useState("");
+  const [deleteError,     setDeleteError]     = useState("");
+  const [deleting,        setDeleting]        = useState(false);
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) { setDeleteError("Please enter your password."); return; }
+    setDeleting(true); setDeleteError("");
+    try {
+      await companyAPI.deleteAccount(deletePassword);
+      logout();
+    } catch (err) {
+      setDeleteError(err.message || "Failed to delete account.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const triggerRetrain = async () => {
     setRetraining(true); setRetrainOk(false); setRetrainErr(null);
@@ -1418,6 +1437,116 @@ export default function MyCompany() {
             After retraining, use <strong>Regenerate Strategy</strong> on any campaign to apply the updated KPI format and improvements.
           </p>
         </SectionCard>
+      )}
+
+      {/* ── Danger Zone ──────────────────────────────────────────────────────── */}
+      {role === "study_coordinator" && (
+        <SectionCard
+          title="Danger Zone"
+          subtitle="Irreversible actions that affect the entire account."
+          style={{ marginTop: 32, border: "1px solid #fca5a5" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <p style={{ fontWeight: 600, fontSize: "0.875rem", color: "#dc2626" }}>Delete Company Account</p>
+              <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                Permanently deletes the company, all users, campaigns, documents, and skills. This cannot be undone.
+              </p>
+            </div>
+            <button
+              onClick={() => { setShowDeleteModal(true); setDeletePassword(""); setDeleteError(""); }}
+              className="btn--danger"
+            >
+              <Trash2 size={14} /> Delete Account
+            </button>
+          </div>
+        </SectionCard>
+      )}
+
+      {/* ── Delete confirmation modal ─────────────────────────────────────── */}
+      {showDeleteModal && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteModal(false); }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 60,
+            backgroundColor: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "24px",
+          }}
+        >
+          <div style={{
+            backgroundColor: "var(--color-card-bg)",
+            border: "1px solid #fca5a5",
+            borderRadius: "14px",
+            width: "100%", maxWidth: "420px",
+            padding: "28px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                backgroundColor: "rgba(220,38,38,0.1)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Trash2 size={17} style={{ color: "#dc2626" }} />
+              </div>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "var(--color-input-text)" }}>Delete Company Account</p>
+                <p style={{ fontSize: "0.72rem", color: "#dc2626" }}>This action is permanent and cannot be undone</p>
+              </div>
+            </div>
+
+            <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", marginBottom: 16, lineHeight: 1.6 }}>
+              All company data will be permanently erased — users, campaigns, documents, brand kit, and AI skills.
+              Enter your password to confirm.
+            </p>
+
+            <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-input-text)", display: "block", marginBottom: 6 }}>
+              Your Password
+            </label>
+            <input
+              type="password"
+              value={deletePassword}
+              onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(""); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleDeleteAccount(); }}
+              placeholder="Enter your password"
+              autoFocus
+              style={{
+                width: "100%", padding: "9px 12px",
+                border: `1px solid ${deleteError ? "#fca5a5" : "var(--color-card-border)"}`,
+                borderRadius: 8, fontSize: "0.875rem",
+                backgroundColor: "var(--color-input-bg)",
+                color: "var(--color-input-text)",
+                outline: "none", boxSizing: "border-box",
+              }}
+            />
+            {deleteError && (
+              <p style={{ fontSize: "0.75rem", color: "#dc2626", marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                <AlertCircle size={12} /> {deleteError}
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="btn--ghost"
+                style={{ flex: 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleting || !deletePassword}
+                className="btn--danger"
+                style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: (!deletePassword || deleting) ? 0.6 : 1 }}
+              >
+                {deleting
+                  ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Deleting…</>
+                  : <><Trash2 size={14} /> Delete Forever</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

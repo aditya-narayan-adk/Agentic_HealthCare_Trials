@@ -239,6 +239,20 @@ body {
     color:            var(--color-btn-danger-text);
   }
 
+  /*
+   * .btn--danger  (solid red — destructive actions like delete account)
+   */
+  .btn--danger {
+    @apply btn;
+    background-color: #dc2626;
+    color:            #ffffff;
+    display:          inline-flex;
+    align-items:      center;
+    gap:              6px;
+  }
+  .btn--danger:hover:not(:disabled) { background-color: #b91c1c; }
+  .btn--danger:disabled              { opacity: 0.5; cursor: not-allowed; }
+
 
   /* ── CARDS ───────────────────────────────────────────────────────────────── */
 
@@ -687,3 +701,7 @@ body {
    KEYFRAMES
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.15); }
+}

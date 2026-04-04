@@ -64,6 +64,7 @@ class TokenResponse(BaseModel):
     company_name: str
     company_industry: Optional[str] = None
     user_id: str
+    onboarded: bool = False
 
 
 # ─── Onboarding Schemas ──────────────────────────────────────────────────────

@@ -254,7 +254,7 @@ export default function UploadDocumentsStep({
       {/* Navigation */}
       <div className="flex gap-3">
         <button onClick={onBack} className="btn--ghost flex-1 py-3">← Back</button>
-        <button onClick={onNext} className="btn--primary flex-1 py-3">Next: Brand Kit →</button>
+        <button onClick={onNext} className="btn--primary flex-1 py-3">Next: Location →</button>
       </div>
     </div>
   );

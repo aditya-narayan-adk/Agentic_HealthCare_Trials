@@ -1,62 +1,92 @@
 """
 Creative Agent - Ad Copy + Image Generation
 Owner: AI Dev
-Dependencies: M8 (Advertisements), AWS Bedrock (Claude + Amazon Nova Canvas)
 
-Flow:
-1. Claude generates structured copy + image prompts for each ad format
-2. Amazon Nova Canvas produces images via boto3
-3. Images saved to outputs/<company_id>/<ad_id>/
-4. Returns list of creative dicts with image URLs served via /outputs/
+Pipeline:
+  1. Claude Sonnet  → structured JSON (layout specs + copy + photo prompt)
+  2. GPT-image-1    → clean background photo (scene only, no text)
+  3. Compositor     → Pillow overlays headline, divider, subtext onto photo
+  4. Save PNG       → served via /outputs/
 """
 
 import asyncio
 import base64
-import boto3
 import json
 import os
 from typing import Dict, Any, List
 
+from openai import AzureOpenAI, OpenAI
+
 from app.models.models import Advertisement
 from app.core.bedrock import get_async_client, get_model, is_configured
 from app.core.config import settings
+from app.services.ai.compositor import composite_ad
 
 
-# Nova Canvas: width & height must be multiples of 16, 320–4096, product ≤ 4,194,304
-_FORMAT_DIMENSIONS = {
-    "1080x1080": (1024, 1024),
-    "square":    (1024, 1024),
-    "1080x1920": (768,  1344),  # 9:16 portrait / story
-    "story":     (768,  1344),
-    "portrait":  (768,  1344),
-    "9x16":      (768,  1344),
-    "16:9":      (1344, 768),   # 16:9 landscape / banner
-    "landscape": (1344, 768),
-    "banner":    (1344, 768),
-    "16x9":      (1344, 768),
-}
+def _get_image_client():
+    """Returns AzureOpenAI if Azure Foundry vars are set, else standard OpenAI."""
+    if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
+        return AzureOpenAI(
+            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            api_version=settings.AZURE_OPENAI_API_VERSION,
+        )
+    return OpenAI(api_key=settings.OPENAI_API_KEY)
 
-_CREATIVE_SYSTEM = """You are an expert advertising creative director.
-Given a marketing strategy and ad specifications, generate structured creative briefs
-for each ad format — including polished copy and a detailed image generation prompt.
 
-Rules for image prompts:
-- Photorealistic, professional photography or high-quality CGI
-- Absolutely NO text, words, letters, logos, or watermarks in the image
-- Describe composition, lighting, mood, subject, and background in detail
-- Incorporate the brand visual style from the strategy if available
-- image_prompt may be up to 1024 characters
+def _image_generation_enabled() -> bool:
+    return bool(
+        (settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
+        or settings.OPENAI_API_KEY
+    )
+
+
+# ── Claude system prompt ──────────────────────────────────────────────────────
+
+_CREATIVE_SYSTEM = """You are an expert healthcare advertising creative director specializing in pharma and clinical trial recruitment ads.
+
+Given a marketing strategy and ad specifications, output structured creative briefs — one per format.
+
+Each creative has two parts:
+1. LAYOUT SPECS  — everything the compositor needs to render the text design overlay
+2. IMAGE PROMPT  — a prompt for GPT-image-1 to generate the PHOTO ONLY (bottom section, no text, no layout)
+
+Layout rules:
+- top_bg_color   : hex color for the solid top panel (navy #0a1f5c, deep teal #0d4f5c, dark slate #1a2b4a, or similar dark brand color)
+- top_height_pct : integer 38–48 (percent of total image height for the top text panel)
+- headline_text  : the HOOK question or statement. Write ALL CAPS for the key condition/disease/action words to mark emphasis (e.g. "Did you previously have PROSTATE CANCER?")
+- divider_color  : hex color for the thin horizontal line (usually #FFFFFF or a brand accent)
+- subtext        : short supporting line below the divider (e.g. "You may qualify for a clinical research study.")
+- text_color     : headline text color (usually #FFFFFF)
+- subtext_color  : subtext color (usually #CCCCCC or #E0E0E0)
+
+Image prompt rules:
+- ONLY describe the scene/subjects for the photo (bottom section)
+- Smiling, hopeful subjects matching the target demographic
+- Warm natural light, sky or soft background, uplifting mood
+- Pharma ad style, photorealistic, editorial photography quality
+- NO text, NO words, NO letters, NO overlays, NO graphics
+- Max 400 characters
 
 Respond ONLY with valid JSON (no markdown fences, no extra text):
 {
   "creatives": [
     {
       "index": 0,
-      "format": "<format name from ad specs>",
+      "format": "<format name>",
       "headline": "<short punchy headline, max 8 words>",
       "body": "<2-3 sentence ad body text>",
       "cta": "<call to action, max 4 words>",
-      "image_prompt": "<detailed image generation prompt for Nova Canvas>"
+      "layout": {
+        "top_bg_color": "#0a1f5c",
+        "top_height_pct": 42,
+        "headline_text": "<HOOK with ALL CAPS emphasis on key words>",
+        "divider_color": "#FFFFFF",
+        "subtext": "<short supporting line>",
+        "text_color": "#FFFFFF",
+        "subtext_color": "#CCCCCC"
+      },
+      "image_prompt": "<photo-only prompt for GPT-image-1, no text, no layout>"
     }
   ]
 }"""
@@ -69,24 +99,25 @@ class CreativeService:
     async def generate_creatives(self, ad: Advertisement) -> List[Dict[str, Any]]:
         """
         Main entry point.
-        Returns list of creative dicts: {format, headline, body, cta, image_prompt, image_url}
+        Returns list of creative dicts: {format, headline, body, cta, layout, image_prompt, image_url}
         """
         output_dir = os.path.join(settings.OUTPUT_DIR, self.company_id, ad.id)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Step 1: Claude generates copy + image prompts
+        # Step 1: Claude → structured JSON (layout + photo prompt)
         brief = await self._generate_brief(ad)
         items = brief.get("creatives", [])
         if not items:
             return []
 
-        # Step 2: Generate images concurrently (each in a thread — boto3 is sync)
+        # Steps 2 + 3: GPT photo → Pillow composite (each in a thread, concurrent)
         async def process(item):
             image_url = None
-            if is_configured() and settings.USE_BEDROCK:
+            if _image_generation_enabled():
                 image_url = await asyncio.to_thread(
-                    self._generate_image,
+                    self._generate_and_composite,
                     item.get("image_prompt", ""),
+                    item.get("layout", {}),
                     item.get("format", "square"),
                     item.get("index", 0),
                     output_dir,
@@ -97,6 +128,7 @@ class CreativeService:
                 "headline":     item.get("headline", ""),
                 "body":         item.get("body", ""),
                 "cta":          item.get("cta", ""),
+                "layout":       item.get("layout", {}),
                 "image_prompt": item.get("image_prompt", ""),
                 "image_url":    image_url,
             }
@@ -104,7 +136,7 @@ class CreativeService:
         results = await asyncio.gather(*[process(c) for c in items])
         return list(results)
 
-    # ── Private: Claude call ─────────────────────────────────────────────────
+    # ── Step 1: Claude brief ──────────────────────────────────────────────────
 
     async def _generate_brief(self, ad: Advertisement) -> Dict[str, Any]:
         if not is_configured():
@@ -124,11 +156,11 @@ Budget: {ad.budget or 'unspecified'}
 {ad_details}
 
 Generate one creative brief per format listed in the ad specifications.
-If no formats are defined, generate three 1080x1920 Meta Ads (portrait/story format) — each a distinct creative iteration with different messaging, mood, and image concept, but all sized 1080x1920.
-"""
+If no formats are defined, generate three 1080x1920 Meta Story Ads — each a distinct creative with different hook, mood, and photo concept."""
+
         response = await client.messages.create(
             model=get_model(),
-            max_tokens=2048,
+            max_tokens=3000,
             system=_CREATIVE_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
         )
@@ -142,11 +174,12 @@ If no formats are defined, generate three 1080x1920 Meta Ads (portrait/story for
             )
             return self._mock_brief(ad)
 
-    # ── Private: Nova Canvas ─────────────────────────────────────────────────
+    # ── Steps 2+3: GPT photo → composite ─────────────────────────────────────
 
-    def _generate_image(
+    def _generate_and_composite(
         self,
-        prompt: str,
+        image_prompt: str,
+        layout: dict,
         format_name: str,
         index: int,
         output_dir: str,
@@ -154,75 +187,72 @@ If no formats are defined, generate three 1080x1920 Meta Ads (portrait/story for
     ) -> str | None:
         """
         Synchronous — run via asyncio.to_thread.
-        Calls Amazon Nova Canvas on Bedrock and saves PNG to disk.
-        Returns the URL path or None on failure.
+        1. GPT-image-1 generates the scene photo
+        2. Compositor overlays text design
+        3. Saves final PNG and returns URL path
         """
-        width, height = self._get_dimensions(format_name)
+        import logging
+        log = logging.getLogger(__name__)
 
         try:
-            boto3_kwargs = {"region_name": settings.AWS_REGION}
-            if settings.AWS_ACCESS_KEY_ID:
-                boto3_kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
-            if settings.AWS_SECRET_ACCESS_KEY:
-                boto3_kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
-            bedrock = boto3.client("bedrock-runtime", **boto3_kwargs)
+            # Step 2: GPT-image-1 → raw scene photo
+            client = _get_image_client()
+            size   = self._get_openai_size(format_name)
 
-            safe_prompt = (prompt or "Professional advertisement, modern minimal design, clean composition")[:1024]
+            safe_prompt = (
+                image_prompt or
+                "Smiling hopeful older couple outdoors, warm sunlight, blue sky, photorealistic, no text"
+            )[:400]
 
-            body = json.dumps({
-                "taskType": "TEXT_IMAGE",
-                "textToImageParams": {
-                    "text":         safe_prompt,
-                    "negativeText": "text, words, letters, watermark, blurry, distorted, low quality, ugly, nsfw",
-                },
-                "imageGenerationConfig": {
-                    "numberOfImages": 1,
-                    "height":         height,
-                    "width":          width,
-                    "quality":        "premium",
-                    "cfgScale":       7.5,
-                    "seed":           0,
-                },
-            })
-
-            response = bedrock.invoke_model(
-                modelId="amazon.nova-canvas-v1:0",
-                body=body,
-                contentType="application/json",
-                accept="application/json",
+            response = client.images.generate(
+                model=settings.OPENAI_IMAGE_MODEL,
+                prompt=safe_prompt,
+                size=size,
+                quality="high",
+                n=1,
+                output_format="png",
             )
+            # gpt-image-1 returns base64 in b64_json regardless of client type
+            photo_bytes = base64.b64decode(response.data[0].b64_json)
 
-            result      = json.loads(response["body"].read())
-            image_bytes = base64.b64decode(result["images"][0])
+            # Step 3: Compositor → overlay text design
+            canvas_w, canvas_h = self._get_canvas_dimensions(format_name)
+            final_png = composite_ad(photo_bytes, layout, canvas_w, canvas_h)
 
-            safe_fmt  = (
-                format_name.replace(" ", "_").replace("/", "-")
-                           .replace(":", "-").lower()
-            )
+            # Save
+            safe_fmt  = format_name.replace(" ", "_").replace("/", "-").replace(":", "-").lower()
             filename  = f"creative_{index}_{safe_fmt}.png"
             file_path = os.path.join(output_dir, filename)
-
             with open(file_path, "wb") as f:
-                f.write(image_bytes)
+                f.write(final_png)
 
             return f"/outputs/{self.company_id}/{ad_id}/{filename}"
 
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error(
-                "Nova Canvas image generation failed [format=%s, ad=%s]: %s",
+                "Creative generation failed [format=%s, ad=%s]: %s",
                 format_name, ad_id, exc,
             )
             return None
 
-    def _get_dimensions(self, format_name: str) -> tuple[int, int]:
+    def _get_openai_size(self, format_name: str) -> str:
         fmt = format_name.lower()
-        for key, dims in _FORMAT_DIMENSIONS.items():
-            if key in fmt:
-                return dims
-        return (1024, 1024)
+        if any(k in fmt for k in ("1080x1920", "story", "portrait", "9x16", "9:16")):
+            return "1024x1536"
+        if any(k in fmt for k in ("16x9", "16:9", "landscape", "banner")):
+            return "1536x1024"
+        return "1024x1024"
 
-    # ── Mock (no API key configured) ─────────────────────────────────────────
+    def _get_canvas_dimensions(self, format_name: str) -> tuple[int, int]:
+        fmt = format_name.lower()
+        if any(k in fmt for k in ("1080x1920", "story", "portrait", "9x16", "9:16")):
+            return (1080, 1920)
+        if any(k in fmt for k in ("16x9", "16:9", "landscape", "banner")):
+            return (1920, 1080)
+        return (1080, 1080)
+
+    # ── Mock (no API keys configured) ────────────────────────────────────────
 
     def _mock_brief(self, ad: Advertisement) -> Dict[str, Any]:
         return {
@@ -233,16 +263,34 @@ If no formats are defined, generate three 1080x1920 Meta Ads (portrait/story for
                     "headline": f"Discover {ad.title}",
                     "body": "Cutting-edge solutions built around your needs. Trusted by professionals worldwide.",
                     "cta": "Learn More",
-                    "image_prompt": "Portrait 9:16 Meta ad, modern minimalist healthcare setting, soft natural lighting, confident patient and doctor in consultation, clean clinical background, professional photography",
+                    "layout": {
+                        "top_bg_color": "#0a1f5c",
+                        "top_height_pct": 42,
+                        "headline_text": "Have you been diagnosed with a SERIOUS CONDITION?",
+                        "divider_color": "#FFFFFF",
+                        "subtext": "You may qualify for a clinical research study.",
+                        "text_color": "#FFFFFF",
+                        "subtext_color": "#CCCCCC",
+                    },
+                    "image_prompt": "Smiling hopeful older couple outdoors, warm natural sunlight, blue sky background, optimistic mood, pharma ad style, photorealistic, no text",
                     "image_url": None,
                 },
                 {
                     "index": 1,
                     "format": "1080x1920 Meta Ad",
-                    "headline": "Make Your Move",
+                    "headline": "Take Control of Your Health",
                     "body": "The future starts with one decision. Join thousands who already made the leap.",
                     "cta": "Get Started",
-                    "image_prompt": "Portrait 9:16 Meta ad, inspiring close-up of a confident smiling person, warm golden hour lighting, soft bokeh background, optimistic hopeful mood, photorealistic",
+                    "layout": {
+                        "top_bg_color": "#0d4f5c",
+                        "top_height_pct": 40,
+                        "headline_text": "Are you living with TYPE 2 DIABETES?",
+                        "divider_color": "#FFD700",
+                        "subtext": "Explore a clinical study that could change your life.",
+                        "text_color": "#FFFFFF",
+                        "subtext_color": "#E0E0E0",
+                    },
+                    "image_prompt": "Confident smiling middle-aged woman looking upward, warm golden light, soft nature background, hopeful uplifting mood, photorealistic, no text",
                     "image_url": None,
                 },
                 {
@@ -251,7 +299,16 @@ If no formats are defined, generate three 1080x1920 Meta Ads (portrait/story for
                     "headline": "Results That Speak",
                     "body": "Data-driven campaigns that convert. See the difference on day one.",
                     "cta": "See Results",
-                    "image_prompt": "Portrait 9:16 Meta ad, modern medical research lab, scientists collaborating, bright clean environment, professional clinical atmosphere, photorealistic",
+                    "layout": {
+                        "top_bg_color": "#1a2b4a",
+                        "top_height_pct": 44,
+                        "headline_text": "Are you suffering from CHRONIC PAIN?",
+                        "divider_color": "#FFFFFF",
+                        "subtext": "A clinical study near you may help.",
+                        "text_color": "#FFFFFF",
+                        "subtext_color": "#BBBBBB",
+                    },
+                    "image_prompt": "Smiling senior man outdoors, soft warm light, green park background, relaxed hopeful expression, photorealistic, no text",
                     "image_url": None,
                 },
             ]

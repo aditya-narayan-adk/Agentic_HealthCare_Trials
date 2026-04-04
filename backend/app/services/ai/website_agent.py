@@ -581,54 +581,130 @@ class WebsiteAgentService:
         voice_js = ""
         if has_voice and ad_id:
             voice_js = f"""
-<script type="module">
-/* ── ElevenLabs Voice Call ─────────────────────────────────────────────── */
-(async function () {{
-  var voiceBtn    = document.getElementById('voice-call-btn');
-  var callbackBtn = document.getElementById('callback-btn');
+<script>
+/* ── ElevenLabs Voice Call — native WebSocket + Web Audio (no CDN deps) ── */
+(function () {{
+  var voiceBtn      = document.getElementById('voice-call-btn');
+  var scheduleBtn   = document.getElementById('schedule-call-btn');
   if (!voiceBtn) return;
 
   var AD_ID    = '{ad_id}';
   var API_BASE = window.location.origin;
-  var conversation = null;
+
+  /* session state: null when idle, object when active */
+  var session = null;  /* {{ ws, ctx, processor, stream }} */
 
   function setBtn(text, disabled) {{
     voiceBtn.textContent   = text;
     voiceBtn.disabled      = disabled;
     voiceBtn.style.opacity = disabled ? '0.6' : '1';
+    voiceBtn.style.cursor  = disabled ? 'not-allowed' : 'pointer';
+  }}
+
+  function endCall() {{
+    if (!session) return;
+    if (session.ws)        {{ try {{ session.ws.close(1000); }} catch(_) {{}} }}
+    if (session.processor) {{ try {{ session.processor.disconnect(); }} catch(_) {{}} }}
+    if (session.stream)    {{ session.stream.getTracks().forEach(function(t) {{ t.stop(); }}); }}
+    if (session.ctx)       {{ try {{ session.ctx.close(); }} catch(_) {{}} }}
+    session = null;
+    setBtn('Start Voice Call \u2192', false);
+  }}
+
+  function playPCM(ctx, b64, schedRef) {{
+    try {{
+      var bin   = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var i16 = new Int16Array(bytes.buffer);
+      var f32 = new Float32Array(i16.length);
+      for (var i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+      var buf = ctx.createBuffer(1, f32.length, 16000);
+      buf.copyToChannel(f32, 0);
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      var at = Math.max(ctx.currentTime, schedRef.t);
+      src.start(at);
+      schedRef.t = at + buf.duration;
+    }} catch(_) {{}}
   }}
 
   async function startCall() {{
     setBtn('Connecting\u2026', true);
     try {{
-      /* 1. Fetch signed WebSocket URL from our backend (no auth needed) */
+      /* 1. Guard: mediaDevices requires HTTPS or localhost */
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+        throw new Error('Microphone not available \u2014 this page must be served over HTTPS.');
+      }}
+
+      /* 2. Request microphone permission */
+      var stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
+
+      /* 3. Fetch signed WebSocket URL from backend (no auth required) */
       var resp = await fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-session/token');
-      if (!resp.ok) throw new Error('Session token failed — is the voice agent provisioned? (HTTP ' + resp.status + ')');
+      if (!resp.ok) throw new Error('Could not get session token (HTTP ' + resp.status + '). Is the voice agent provisioned?');
       var data = await resp.json();
-      if (!data.signed_url) throw new Error('No signed URL returned from server');
+      if (!data.signed_url) throw new Error('No signed_url in server response.');
 
-      /* 2. Load ElevenLabs SDK via ESM (esm.sh handles all dependencies automatically) */
-      var {{ Conversation }} = await import('https://esm.sh/@11labs/client');
+      /* 4. Web Audio context at 16 kHz (matches ElevenLabs ConvAI format) */
+      var ctx      = new AudioContext({{ sampleRate: 16000 }});
+      var schedRef = {{ t: ctx.currentTime }};
 
-      /* 3. Request microphone permission explicitly so errors are clear */
-      await navigator.mediaDevices.getUserMedia({{ audio: true }});
+      /* 5. Open WebSocket to ElevenLabs */
+      var ws = new WebSocket(data.signed_url);
 
-      /* 4. Start WebSocket voice session — audio never touches our servers */
-      conversation = await Conversation.startSession({{
-        signedUrl: data.signed_url,
-        onConnect: function () {{
-          setBtn('\u23F9 End Call', false);
-        }},
-        onDisconnect: function () {{
-          setBtn('Start Voice Call \u2192', false);
-          conversation = null;
-        }},
-        onError: function (err) {{
-          console.error('[ElevenLabs]', err);
-          setBtn('Start Voice Call \u2192', false);
-          conversation = null;
-        }},
-      }});
+      ws.onopen = function () {{
+        setBtn('\u23F9\uFE0F End Call', false);
+
+        /* Mic \u2192 PCM-16 \u2192 base64 \u2192 WebSocket */
+        var source    = ctx.createMediaStreamSource(stream);
+        var processor = ctx.createScriptProcessor(4096, 1, 1);
+        var muted     = ctx.createGain();
+        muted.gain.value = 0;
+        source.connect(processor);
+        processor.connect(muted);
+        muted.connect(ctx.destination);
+
+        processor.onaudioprocess = function (e) {{
+          if (!session || ws.readyState !== WebSocket.OPEN) return;
+          var f32 = e.inputBuffer.getChannelData(0);
+          var i16 = new Int16Array(f32.length);
+          for (var i = 0; i < f32.length; i++) i16[i] = Math.round(Math.max(-1, Math.min(1, f32[i])) * 32767);
+          var u8  = new Uint8Array(i16.buffer);
+          var b64 = '';
+          for (var i = 0; i < u8.length; i += 8192) b64 += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 8192, u8.length)));
+          ws.send(JSON.stringify({{ user_audio_chunk: btoa(b64) }}));
+        }};
+
+        session = {{ ws: ws, ctx: ctx, processor: processor, stream: stream, schedRef: schedRef }};
+      }};
+
+      ws.onmessage = function (evt) {{
+        try {{
+          var msg = JSON.parse(evt.data);
+          if (msg.type === 'audio' && msg.audio_event && msg.audio_event.audio_base_64) {{
+            playPCM(ctx, msg.audio_event.audio_base_64, schedRef);
+          }} else if (msg.type === 'interruption') {{
+            schedRef.t = ctx.currentTime;
+          }} else if (msg.type === 'ping') {{
+            ws.send(JSON.stringify({{ type: 'pong', event_id: msg.ping_event && msg.ping_event.event_id }}));
+          }}
+        }} catch(_) {{}}
+      }};
+
+      ws.onerror = function () {{
+        endCall();
+        alert('Connection error \u2014 verify the ElevenLabs API key and that the agent is provisioned.');
+      }};
+
+      ws.onclose = function (evt) {{
+        if (session) {{
+          endCall();
+          if (evt.code !== 1000) alert('Session ended unexpectedly (code ' + evt.code + ').');
+        }}
+      }};
+
     }} catch (e) {{
       setBtn('Start Voice Call \u2192', false);
       if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {{
@@ -640,33 +716,97 @@ class WebsiteAgentService:
   }}
 
   voiceBtn.addEventListener('click', function () {{
-    if (conversation) {{
-      conversation.endSession();
-      return;
-    }}
+    if (session) {{ endCall(); return; }}
     startCall();
   }});
 
-  /* ── Callback request form (inline modal) ─────────────────────────── */
-  if (callbackBtn) {{
-    var modal = document.createElement('div');
-    modal.innerHTML = '<div id="cb-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;align-items:center;justify-content:center"><div style="background:#fff;border-radius:18px;padding:36px 32px;max-width:420px;width:90%;box-shadow:0 16px 48px rgba(0,0,0,0.22);text-align:center"><h3 style="font-size:1.2rem;font-weight:800;margin-bottom:8px">Request a Callback</h3><p style="color:#64748b;font-size:0.9rem;margin-bottom:20px">Enter your phone number and we\'ll call you back shortly.</p><input id="cb-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 16px;font-size:0.95rem;margin-bottom:14px;font-family:inherit;outline:none" /><button id="cb-submit" style="width:100%;background:var(--accent,#10b981);color:#fff;border:none;border-radius:50px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;font-family:inherit">Request Callback</button><p id="cb-thanks" style="display:none;margin-top:14px;color:#10b981;font-weight:600">&#10003; Got it! We\'ll call you back shortly.</p><button id="cb-close" style="margin-top:16px;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:0.85rem;font-family:inherit">Cancel</button></div></div>';
-    document.body.appendChild(modal);
+  /* ── Schedule a Call modal ──────────────────────────────────────────── */
+  if (scheduleBtn) {{
+    /* Build today's date string for the min attribute */
+    var todayStr = (function() {{
+      var d = new Date();
+      var mm = String(d.getMonth() + 1).padStart(2, '0');
+      var dd = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + mm + '-' + dd;
+    }})();
 
-    var cbModal  = document.getElementById('cb-modal');
-    var cbPhone  = document.getElementById('cb-phone');
-    var cbSubmit = document.getElementById('cb-submit');
-    var cbThanks = document.getElementById('cb-thanks');
-    var cbClose  = document.getElementById('cb-close');
+    var scModal = document.createElement('div');
+    scModal.innerHTML = [
+      '<div id="sc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000;align-items:center;justify-content:center">',
+        '<div style="background:#fff;border-radius:20px;padding:40px 36px;max-width:440px;width:92%;box-shadow:0 20px 60px rgba(0,0,0,0.25);text-align:center;font-family:inherit">',
+          '<div style="font-size:2rem;margin-bottom:10px">📅</div>',
+          '<h3 style="font-size:1.25rem;font-weight:800;margin:0 0 6px">Schedule Your Call</h3>',
+          '<p style="color:#64748b;font-size:0.88rem;margin:0 0 24px">Choose a date &amp; time and we\'ll call you right on schedule.</p>',
 
-    callbackBtn.addEventListener('click', function () {{ cbModal.style.display = 'flex'; cbPhone.focus(); }});
-    if (cbClose)  cbClose.addEventListener('click',  function () {{ cbModal.style.display = 'none'; }});
-    if (cbSubmit) cbSubmit.addEventListener('click', function () {{
-      var phone = (cbPhone && cbPhone.value || '').trim();
-      if (!phone) {{ cbPhone.style.borderColor = '#ef4444'; return; }}
-      cbPhone.style.borderColor = '#e2e8f0';
-      cbSubmit.style.display = 'none';
-      if (cbThanks) cbThanks.style.display = 'block';
+          '<label style="display:block;text-align:left;font-size:0.8rem;font-weight:600;color:#374151;margin-bottom:4px">Date</label>',
+          '<input id="sc-date" type="date" min="' + todayStr + '" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:11px 14px;font-size:0.95rem;margin-bottom:14px;font-family:inherit;outline:none" />',
+
+          '<label style="display:block;text-align:left;font-size:0.8rem;font-weight:600;color:#374151;margin-bottom:4px">Preferred Time</label>',
+          '<input id="sc-time" type="time" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:11px 14px;font-size:0.95rem;margin-bottom:14px;font-family:inherit;outline:none" />',
+
+          '<label style="display:block;text-align:left;font-size:0.8rem;font-weight:600;color:#374151;margin-bottom:4px">Phone Number</label>',
+          '<input id="sc-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:11px 14px;font-size:0.95rem;margin-bottom:20px;font-family:inherit;outline:none" />',
+
+          '<button id="sc-submit" style="width:100%;background:var(--accent,#10b981);color:#fff;border:none;border-radius:50px;padding:14px;font-size:0.97rem;font-weight:700;cursor:pointer;font-family:inherit">Confirm Schedule</button>',
+          '<div id="sc-thanks" style="display:none;margin-top:18px;padding:14px;background:#f0fdf4;border-radius:12px;color:#15803d;font-weight:600;font-size:0.95rem">&#10003; Your call is scheduled! We\'ll reach you at the chosen time.</div>',
+          '<button id="sc-close" style="margin-top:14px;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:0.85rem;font-family:inherit">Cancel</button>',
+        '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(scModal);
+
+    var scModalEl = document.getElementById('sc-modal');
+    var scDate    = document.getElementById('sc-date');
+    var scTime    = document.getElementById('sc-time');
+    var scPhone   = document.getElementById('sc-phone');
+    var scSubmit  = document.getElementById('sc-submit');
+    var scThanks  = document.getElementById('sc-thanks');
+    var scClose   = document.getElementById('sc-close');
+
+    scheduleBtn.addEventListener('click', function () {{
+      scModalEl.style.display = 'flex';
+      scDate.focus();
+    }});
+
+    if (scClose) scClose.addEventListener('click', function () {{
+      scModalEl.style.display = 'none';
+    }});
+
+    /* Close on backdrop click */
+    scModalEl.addEventListener('click', function (e) {{
+      if (e.target === scModalEl) scModalEl.style.display = 'none';
+    }});
+
+    if (scSubmit) scSubmit.addEventListener('click', function () {{
+      var date  = (scDate  && scDate.value  || '').trim();
+      var time  = (scTime  && scTime.value  || '').trim();
+      var phone = (scPhone && scPhone.value || '').trim();
+      var ok = true;
+
+      [scDate, scTime, scPhone].forEach(function(el) {{
+        if (el) el.style.borderColor = '#e2e8f0';
+      }});
+
+      if (!date)  {{ if (scDate)  scDate.style.borderColor  = '#ef4444'; ok = false; }}
+      if (!time)  {{ if (scTime)  scTime.style.borderColor  = '#ef4444'; ok = false; }}
+      if (!phone) {{ if (scPhone) scPhone.style.borderColor = '#ef4444'; ok = false; }}
+
+      if (!ok) return;
+
+      scSubmit.disabled = true;
+      scSubmit.textContent = 'Scheduled \u2713';
+      if (scThanks) scThanks.style.display = 'block';
+
+      /* Auto-close after 3 s */
+      setTimeout(function () {{
+        scModalEl.style.display = 'none';
+        scSubmit.disabled = false;
+        scSubmit.textContent = 'Confirm Schedule';
+        if (scThanks) scThanks.style.display = 'none';
+        if (scDate)  scDate.value  = '';
+        if (scTime)  scTime.value  = '';
+        if (scPhone) scPhone.value = '';
+      }}, 3000);
     }});
   }}
 }})();
@@ -738,12 +878,12 @@ VOICEBOT SECTION — add immediately after the survey section:
   Two .interaction-card divs inside .interaction-cards:
     Card 1 (featured): icon=🎤, title="Talk to {bot_name} Now",
       desc="Speak with {bot_name} right now through your browser — no phone needed.",
-      btn text="Start Voice Call →", meta="Uses your microphone · Instant · Free"
-    Card 2: icon=📞, title="Request a Callback",
-      desc="Prefer your phone? Enter your number and {bot_name} will call you back.",
-      btn text="Request a Call →", meta="Phone call · Free"
+      btn id="voice-call-btn" text="Start Voice Call →", meta="Uses your microphone · Instant · Free"
+    Card 2: icon=📅, title="Schedule a Call",
+      desc="Pick a date, time, and enter your phone number — we'll call you at your chosen slot.",
+      btn id="schedule-call-btn" text="Schedule a Call →", meta="Phone call · You choose the time · Free"
   Add <p class="interaction-note"> with privacy/consent note.
-IMPORTANT: the id="interaction-reveal" attribute is required on the <section> tag.
+IMPORTANT: the id="interaction-reveal" attribute is required on the <section> tag. Button IDs must be exactly: voice-call-btn and schedule-call-btn.
 """
         elif "chatbot" in ad_types:
             interaction_block = f"""
@@ -860,11 +1000,11 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
       <p class="interaction-card__meta">Uses your microphone · Instant · Free</p>
     </div>
     <div class="interaction-card">
-      <div class="interaction-card__icon">📞</div>
-      <p class="interaction-card__title">Request a Callback</p>
-      <p class="interaction-card__desc">Prefer your phone? Enter your number and {bot_name} will call you within 2 minutes.</p>
-      <button class="interaction-card__btn" id="callback-btn">Request a Call →</button>
-      <p class="interaction-card__meta">Phone call · Free</p>
+      <div class="interaction-card__icon">📅</div>
+      <p class="interaction-card__title">Schedule a Call</p>
+      <p class="interaction-card__desc">Pick a date and time that works for you, enter your phone number, and we'll call you right on schedule.</p>
+      <button class="interaction-card__btn" id="schedule-call-btn">Schedule a Call →</button>
+      <p class="interaction-card__meta">Phone call · You choose the time · Free</p>
     </div>
   </div>
   <p class="interaction-note">{bot_name} is an AI assistant. Your responses are confidential and used only to assess eligibility.</p>

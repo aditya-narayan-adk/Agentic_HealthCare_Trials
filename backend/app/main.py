@@ -99,3 +99,5 @@ app.include_router(chat.router,           prefix="/api")
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "version": "1.0.0"}
+
+

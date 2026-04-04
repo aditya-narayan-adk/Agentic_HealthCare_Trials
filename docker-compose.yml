@@ -1,6 +1,8 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8001:8000"        # 8001 on host — avoids conflict with local uvicorn on 8000
     env_file: .env         # loads DATABASE_URL, SECRET_KEY, AWS keys, BEDROCK_MODEL, etc.

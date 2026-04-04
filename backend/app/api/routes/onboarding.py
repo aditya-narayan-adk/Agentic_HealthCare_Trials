@@ -85,7 +85,7 @@ async def onboard_company(body: OnboardingRequest, db: AsyncSession = Depends(ge
         await db.rollback()
         raise HTTPException(status_code=409, detail="email_exists")
 
-    company.onboarded = True
+    # onboarded stays False until POST /onboarding/train succeeds.
 
     return OnboardingResponse(company_id=company.id, admin_user_id=admin.id)
 
@@ -141,10 +141,25 @@ async def trigger_training(
     1. Read skill.md templates for Curator and Reviewer
     2. Fill placeholders with company-specific data from onboarding
     3. Generate customized skill.md files
-
-    TODO: Not yet fully implemented — skill templates must exist at
-    /skills/templates/trainer_template.md before this endpoint will work.
     """
-    trainer = TrainingService(db)
-    status = await trainer.train_company_skills(user.company_id)
-    return status
+    try:
+        trainer = TrainingService(db)
+        training_status = await trainer.train_company_skills(user.company_id)
+
+        # Mark the company as fully onboarded now that training succeeded.
+        company_result = await db.execute(select(Company).where(Company.id == user.company_id))
+        company = company_result.scalar_one_or_none()
+        if company:
+            company.onboarded = True
+            await db.commit()
+
+        return training_status
+    except FileNotFoundError as e:
+        logger.error("Training failed — skill template file missing: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Skill template file not found on server: {e}. Redeploy the backend image.",
+        )
+    except Exception as e:
+        logger.error("Training failed for company %s: %s", user.company_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

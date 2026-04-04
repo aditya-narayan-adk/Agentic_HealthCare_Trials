@@ -10,7 +10,7 @@
  *   /publisher/analytics → Analytics  — optimizer + performance
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
 import { adsAPI, analyticsAPI } from "../../services/api";
@@ -18,7 +18,7 @@ import {
   Send, Globe, Image, BarChart3, Play, Sparkles,
   CheckCircle, Rocket, ChevronDown, ChevronUp, Zap, X, ImageOff,
   Share2, UploadCloud, ExternalLink, Download, Eye, AlertCircle,
-  CheckCircle2, Loader2, Mic, PhoneCall, Radio, MessageSquare,
+  CheckCircle2, Loader2, Mic, PhoneCall, PhoneOff, Volume2, Radio, MessageSquare,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -233,6 +233,25 @@ export default function PublisherDashboard() {
   // ── Distribute handlers ──────────────────────────────────────────────────
   const handleDistSelect = (adId, platformId) => {
     const isOpen = distExpanded?.adId === adId && distExpanded?.platformId === platformId;
+    if (!isOpen) {
+      // Seed form with AI suggestions from strategy_json when opening
+      const ad = ads.find((a) => a.id === adId);
+      const platformName = Object.entries(SOCIAL_PLATFORMS).find(([, cfg]) => cfg.id === platformId)?.[0];
+      const suggestion = ad?.strategy_json?.social_content?.[platformName];
+      if (suggestion) {
+        const fk = `${adId}_${platformId}`;
+        setDistForms((p) => {
+          const existing = p[fk] || {};
+          // Only seed fields that are still empty so manual edits aren't overwritten
+          const seeded = { ...existing };
+          if (!seeded.caption      && suggestion.caption)   seeded.caption      = suggestion.caption;
+          if (!seeded.hashtags     && suggestion.hashtags)  seeded.hashtags     = suggestion.hashtags;
+          if (!seeded.tweet_text   && suggestion.caption)   seeded.tweet_text   = suggestion.caption;
+          if (!seeded.description  && suggestion.caption)   seeded.description  = suggestion.caption;
+          return { ...p, [fk]: seeded };
+        });
+      }
+    }
     setDistExpanded(isOpen ? null : { adId, platformId });
   };
 
@@ -516,24 +535,131 @@ function VoicebotConfig({ ad }) {
   const existing = ad.bot_config || {};
 
   const [form, setForm] = useState({
-    bot_name:               existing.bot_name               || "Assistant",
-    voice_id:               existing.voice_id               || "EXAVITQu4vr4xnSDxMaL",
-    first_message:          existing.first_message          || "Hi! How can I help you today?",
-    conversation_style:     existing.conversation_style     || "professional",
-    language:               existing.language               || "en",
-    compliance_notes:       existing.compliance_notes       || "",
-    elevenlabs_agent_id:    existing.elevenlabs_agent_id    || "",   // manual paste from ElevenLabs dashboard
+    bot_name:      existing.bot_name      || "Assistant",
+    voice_id:      existing.voice_id      || "EXAVITQu4vr4xnSDxMaL",
+    first_message: existing.first_message || "Hi! How can I help you today?",
+    // conversation_style, language, compliance_notes are set by AI recommendation — not exposed to the user
   });
 
-  const [saving,        setSaving]        = useState(false);
-  const [provisioning,  setProvisioning]  = useState(false);
-  const [agentStatus,   setAgentStatus]   = useState(null);
-  const [statusError,   setStatusError]   = useState(null);
-  const [conversations, setConversations] = useState(null);
-  const [showConvs,     setShowConvs]     = useState(false);
-  const [transcript,    setTranscript]    = useState(null);
-  const [recommending,  setRecommending]  = useState(false);
-  const [recommendation, setRecommendation] = useState(null); // { voice_id, voice_name, reason, conversation_style, first_message }
+  const [saving,         setSaving]         = useState(false);
+  const [provisioning,   setProvisioning]   = useState(false);
+  const [agentStatus,    setAgentStatus]    = useState(null);
+  const [statusError,    setStatusError]    = useState(null);
+  const [conversations,  setConversations]  = useState(null);
+  const [showConvs,      setShowConvs]      = useState(false);
+  const [transcript,     setTranscript]     = useState(null);
+  const [recommending,   setRecommending]   = useState(false);
+  const [recommendation, setRecommendation] = useState(null);
+
+  // ── Live voice test session ─────────────────────────────────────────────────
+  const [callStatus,  setCallStatus]  = useState("idle"); // idle | connecting | connected
+  const [isSpeaking,  setIsSpeaking]  = useState(false);
+  const [callError,   setCallError]   = useState(null);
+  const wsRef        = useRef(null);
+  const ctxRef       = useRef(null);
+  const processorRef = useRef(null);
+  const streamRef    = useRef(null);
+  const schedRef     = useRef(0);
+  const closingRef   = useRef(false);
+
+  const cleanupCall = useCallback(() => {
+    if (processorRef.current) { try { processorRef.current.disconnect(); } catch {} processorRef.current = null; }
+    if (streamRef.current)    { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (ctxRef.current)       { try { ctxRef.current.close(); } catch {} ctxRef.current = null; }
+    schedRef.current = 0;
+    setIsSpeaking(false);
+  }, []);
+
+  const stopCall = useCallback(() => {
+    closingRef.current = true;
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    cleanupCall();
+    setCallStatus("idle");
+  }, [cleanupCall]);
+
+  useEffect(() => () => {
+    closingRef.current = true;
+    if (wsRef.current) wsRef.current.close();
+    cleanupCall();
+  }, [cleanupCall]);
+
+  const playPCM = useCallback((b64) => {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    try {
+      const bin = atob(b64);
+      const u8  = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const i16 = new Int16Array(u8.buffer);
+      const f32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+      const buf = ctx.createBuffer(1, f32.length, 16000);
+      buf.copyToChannel(f32, 0);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const startAt = Math.max(ctx.currentTime, schedRef.current);
+      src.start(startAt);
+      schedRef.current = startAt + buf.duration;
+      setIsSpeaking(true);
+      src.onended = () => { if (!ctxRef.current || schedRef.current <= ctxRef.current.currentTime + 0.05) setIsSpeaking(false); };
+    } catch {}
+  }, []);
+
+  const startCall = async () => {
+    setCallStatus("connecting"); setCallError(null);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Microphone not available — this page must be served over HTTPS or localhost.");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const { signed_url } = await adsAPI.getVoiceSessionToken(ad.id);
+      const ctx = new AudioContext({ sampleRate: 16000 });
+      ctxRef.current = ctx;
+      closingRef.current = false;
+      const ws = new WebSocket(signed_url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setCallStatus("connected");
+        const source    = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
+        const muted = ctx.createGain();
+        muted.gain.value = 0;
+        source.connect(processor);
+        processor.connect(muted);
+        muted.connect(ctx.destination);
+        processor.onaudioprocess = (e) => {
+          if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+          const f32 = e.inputBuffer.getChannelData(0);
+          const i16 = new Int16Array(f32.length);
+          for (let i = 0; i < f32.length; i++) i16[i] = Math.round(Math.max(-1, Math.min(1, f32[i])) * 32767);
+          const u8 = new Uint8Array(i16.buffer);
+          let b64 = "";
+          for (let i = 0; i < u8.length; i += 8192) b64 += String.fromCharCode(...u8.subarray(i, Math.min(i + 8192, u8.length)));
+          wsRef.current.send(JSON.stringify({ user_audio_chunk: btoa(b64) }));
+        };
+      };
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          if (msg.type === "audio" && msg.audio_event?.audio_base_64) playPCM(msg.audio_event.audio_base_64);
+          else if (msg.type === "interruption") { schedRef.current = ctxRef.current?.currentTime ?? 0; setIsSpeaking(false); }
+          else if (msg.type === "ping") ws.send(JSON.stringify({ type: "pong", event_id: msg.ping_event?.event_id }));
+        } catch {}
+      };
+      ws.onerror = () => { stopCall(); setCallError("Connection failed — check your ElevenLabs API key and agent provisioning."); };
+      ws.onclose = (evt) => {
+        if (!closingRef.current) { cleanupCall(); setCallStatus("idle"); if (evt.code !== 1000) setCallError(`Session closed (code ${evt.code}).`); }
+        closingRef.current = false;
+      };
+    } catch (err) {
+      cleanupCall(); setCallStatus("idle");
+      setCallError(err.name === "NotAllowedError" ? "Microphone access denied — allow microphone access and try again." : (err.message || "Failed to start session."));
+    }
+  };
 
   // Load agent status once on mount
   useEffect(() => {
@@ -562,11 +688,11 @@ function VoicebotConfig({ ad }) {
 
   const applyRecommendation = () => {
     if (!recommendation) return;
+    // Only update the user-visible fields; conversation_style / language are AI-managed
     setForm((p) => ({
       ...p,
-      voice_id:           recommendation.voice_id,
-      conversation_style: recommendation.conversation_style,
-      first_message:      recommendation.first_message,
+      voice_id:      recommendation.voice_id,
+      first_message: recommendation.first_message,
     }));
     setRecommendation(null);
   };
@@ -707,55 +833,6 @@ function VoicebotConfig({ ad }) {
             placeholder="Hi! How can I help you today?"
           />
         </div>
-        <div>
-          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Conversation Style</label>
-          <select value={form.conversation_style} onChange={(e) => setForm((p) => ({ ...p, conversation_style: e.target.value }))} className="field-select">
-            <option value="professional">Professional</option>
-            <option value="friendly">Friendly</option>
-            <option value="casual">Casual</option>
-            <option value="formal">Formal</option>
-            <option value="empathetic">Empathetic</option>
-            <option value="energetic">Energetic</option>
-          </select>
-        </div>
-        <div>
-          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Language</label>
-          <select value={form.language} onChange={(e) => setForm((p) => ({ ...p, language: e.target.value }))} className="field-select">
-            <option value="en">English</option>
-            <option value="en-GB">English (UK)</option>
-            <option value="es">Spanish</option>
-            <option value="fr">French</option>
-            <option value="de">German</option>
-            <option value="hi">Hindi</option>
-            <option value="pt">Portuguese</option>
-            <option value="ja">Japanese</option>
-          </select>
-        </div>
-        <div className="col-span-2">
-          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Compliance Notes <span style={{ fontWeight: 400 }}>(optional)</span></label>
-          <input
-            value={form.compliance_notes}
-            onChange={(e) => setForm((p) => ({ ...p, compliance_notes: e.target.value }))}
-            className="field-input"
-            placeholder="e.g. Do not mention competitor names. Always disclose this is an AI."
-          />
-        </div>
-        <div className="col-span-2" style={{ borderTop: "1px solid var(--color-border)", paddingTop: 12, marginTop: 4 }}>
-          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>
-            ElevenLabs Agent ID <span style={{ fontWeight: 400 }}>— paste from dashboard if you created the agent manually</span>
-          </label>
-          <input
-            value={form.elevenlabs_agent_id}
-            onChange={(e) => setForm((p) => ({ ...p, elevenlabs_agent_id: e.target.value }))}
-            className="field-input"
-            placeholder="e.g. abc123def456..."
-            style={{ fontFamily: "monospace", fontSize: "0.82rem" }}
-          />
-          <p style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginTop: 4 }}>
-            ElevenLabs dashboard → Agents → select your agent → copy the Agent ID from the URL or settings.
-            Saving this skips automatic provisioning and uses the agent directly.
-          </p>
-        </div>
       </div>
 
       {/* Action buttons */}
@@ -787,18 +864,62 @@ function VoicebotConfig({ ad }) {
         )}
       </div>
 
-      {/* Error */}
+      {/* Provision error */}
       {statusError && (
         <p style={{ marginTop: 10, fontSize: "0.78rem", color: "#ef4444" }}>
           <AlertCircle size={11} style={{ display: "inline", marginRight: 4 }} />{statusError}
         </p>
       )}
 
-      {/* Agent ID info */}
-      {agentStatus?.provisioned && agentStatus.agent_id && (
-        <p style={{ marginTop: 8, fontSize: "0.72rem", color: "var(--color-muted)" }}>
-          Agent ID: <code style={{ fontSize: "0.7rem" }}>{agentStatus.agent_id}</code>
-        </p>
+      {/* ── Live Voice Test ─────────────────────────────────────────── */}
+      {agentStatus?.provisioned && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--color-border)" }}>
+          <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-muted)", marginBottom: 10 }}>
+            Test Voice Agent
+          </p>
+
+          {callStatus === "connected" ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, border: "1px solid rgba(16,185,129,0.3)", backgroundColor: "rgba(16,185,129,0.05)", marginBottom: 10 }}>
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", backgroundColor: "rgba(16,185,129,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {isSpeaking ? <Volume2 size={16} style={{ color: "#10b981" }} /> : <Mic size={16} style={{ color: "#10b981" }} />}
+                  </div>
+                  {isSpeaking && (
+                    <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid rgba(16,185,129,0.4)", animation: "pulse 1.2s ease-in-out infinite" }} />
+                  )}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: "0.83rem", fontWeight: 700, color: "var(--color-text)" }}>
+                    {isSpeaking ? "Agent is speaking…" : "Listening — speak into your mic"}
+                  </p>
+                  <p style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginTop: 1 }}>Live session active</p>
+                </div>
+              </div>
+              <button onClick={stopCall} className="btn--inline-action--ghost" style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: 5 }}>
+                <PhoneOff size={12} /> End Call
+              </button>
+            </div>
+          ) : (
+            <div>
+              <button
+                onClick={startCall}
+                disabled={callStatus === "connecting"}
+                className="btn--primary"
+                style={{ fontSize: "0.8rem", padding: "7px 16px", display: "flex", alignItems: "center", gap: 6, opacity: callStatus === "connecting" ? 0.7 : 1 }}
+              >
+                {callStatus === "connecting"
+                  ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Connecting…</>
+                  : <><PhoneCall size={12} /> Start Voice Call</>}
+              </button>
+              {callError && (
+                <p style={{ marginTop: 8, fontSize: "0.75rem", color: "#ef4444", display: "flex", alignItems: "flex-start", gap: 5 }}>
+                  <AlertCircle size={12} style={{ flexShrink: 0, marginTop: 1 }} />{callError}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Conversations list */}
@@ -1184,6 +1305,7 @@ function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatf
                   formData={distForms[fk] || {}}
                   status={distStatus[fk]}
                   creatives={ad.output_files}
+                  aiSuggestions={ad.strategy_json?.social_content?.[platformName]}
                   onChange={(key, val) => onUpdateForm(ad.id, platformConfig.id, key, val)}
                   onPost={() => onDistribute(ad.id, platformConfig)}
                 />
@@ -1221,10 +1343,13 @@ function DistributePlatformTile({ platformName, selected, status, dim, onClick }
   );
 }
 
-function DistributeForm({ platformName, platformConfig, formData, status, creatives, onChange, onPost }) {
+function DistributeForm({ platformName, platformConfig, formData, status, creatives, aiSuggestions, onChange, onPost }) {
   const isPosting = status?.status === "posting";
   const isPosted  = status?.status === "posted";
   const isError   = status?.status === "error";
+
+  // Fields that were seeded from AI suggestions
+  const AI_SEEDED_KEYS = new Set(["caption", "hashtags", "tweet_text", "description"]);
 
   const inputStyle = {
     width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.83rem",
@@ -1236,6 +1361,15 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
     display: "block", marginBottom: "5px",
   };
 
+  const aiPill = (
+    <span style={{
+      fontSize: "0.6rem", fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
+      color: "var(--color-accent)", marginLeft: 6, verticalAlign: "middle",
+      letterSpacing: "0.06em", textTransform: "uppercase",
+    }}>AI Suggested</span>
+  );
+
   return (
     <div style={{
       padding: "20px", borderRadius: "12px",
@@ -1245,38 +1379,76 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
         Post to {platformName}
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px", marginBottom: "16px" }}>
-        {platformConfig.fields.map((field) => (
-          <div key={field.key} style={field.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
-            <label style={labelStyle}>{field.label}</label>
-            {field.type === "textarea" ? (
-              <textarea
-                style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
-                placeholder={field.placeholder || ""}
-                value={formData[field.key] || ""}
-                onChange={(e) => onChange(field.key, e.target.value)}
-              />
-            ) : (
-              <input
-                type={field.type}
-                style={inputStyle}
-                placeholder={field.placeholder || ""}
-                value={formData[field.key] || ""}
-                onChange={(e) => onChange(field.key, e.target.value)}
-              />
+      {/* AI Launch Schedule Recommendation */}
+      {aiSuggestions?.launch_schedule && (
+        <div style={{
+          display: "flex", gap: 10, padding: "10px 14px", borderRadius: 10, marginBottom: 16,
+          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
+          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+        }}>
+          <Sparkles size={14} style={{ color: "var(--color-accent)", flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <p style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--color-accent)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>
+              AI Recommended Launch Window
+            </p>
+            <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-input-text)", margin: "0 0 2px" }}>
+              {[aiSuggestions.launch_schedule.recommended_window, aiSuggestions.launch_schedule.best_days, aiSuggestions.launch_schedule.best_time].filter(Boolean).join(" · ")}
+            </p>
+            {aiSuggestions.launch_schedule.rationale && (
+              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", margin: 0, fontStyle: "italic" }}>
+                {aiSuggestions.launch_schedule.rationale}
+              </p>
             )}
           </div>
-        ))}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+        {platformConfig.fields.map((field) => {
+          const isAiField = AI_SEEDED_KEYS.has(field.key) && aiSuggestions && (field.key === "caption" ? aiSuggestions.caption : field.key === "hashtags" ? aiSuggestions.hashtags : aiSuggestions.caption);
+          return (
+            <div key={field.key} style={field.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
+              <label style={labelStyle}>
+                {field.label}
+                {isAiField && aiPill}
+              </label>
+              {field.type === "textarea" ? (
+                <textarea
+                  style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
+                  placeholder={field.placeholder || ""}
+                  value={formData[field.key] || ""}
+                  onChange={(e) => onChange(field.key, e.target.value)}
+                />
+              ) : (
+                <input
+                  type={field.type}
+                  style={inputStyle}
+                  placeholder={field.placeholder || ""}
+                  value={formData[field.key] || ""}
+                  onChange={(e) => onChange(field.key, e.target.value)}
+                />
+              )}
+            </div>
+          );
+        })}
 
         {/* Schedule field — common to all platforms */}
         <div>
-          <label style={labelStyle}>Schedule (optional)</label>
+          <label style={labelStyle}>
+            Schedule (optional)
+            {aiSuggestions?.launch_schedule && aiPill}
+          </label>
           <input
             type="datetime-local"
             style={inputStyle}
             value={formData.schedule_at || ""}
             onChange={(e) => onChange("schedule_at", e.target.value)}
           />
+          {aiSuggestions?.launch_schedule?.recommended_window && !formData.schedule_at && (
+            <p style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", marginTop: 4, fontStyle: "italic" }}>
+              Recommended: {aiSuggestions.launch_schedule.recommended_window}
+            </p>
+          )}
         </div>
       </div>
 

@@ -48,7 +48,7 @@ import {
 //   </RoleGuardedRoute>
 
 export function RoleGuardedRoute({ children, allowedRoles }) {
-  const { isAuthenticated, role, loading } = useAuth();
+  const { isAuthenticated, role, onboarded, loading } = useAuth();
   const location = useLocation();
 
   if (loading) return (
@@ -57,6 +57,7 @@ export function RoleGuardedRoute({ children, allowedRoles }) {
     </div>
   );
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} />;
+  if (!onboarded) return <Navigate to="/onboarding" />;
   if (allowedRoles && !allowedRoles.includes(role)) {
     return <Navigate to="/unauthorized" />;
   }

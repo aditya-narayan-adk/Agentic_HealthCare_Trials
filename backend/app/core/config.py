@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Anthropic (direct API)
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    # Opus 4.6 — used exclusively for ad strategy generation (curator)
+    ANTHROPIC_CURATOR_MODEL: str = "claude-opus-4-6"
 
     # AWS Bedrock
     USE_BEDROCK: bool = False
@@ -43,9 +45,21 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
     BEDROCK_MODEL: str = "us.anthropic.claude-sonnet-4-6"
+    # Opus 4.6 Bedrock ID — used exclusively for ad strategy generation (curator)
+    BEDROCK_CURATOR_MODEL: str = "us.anthropic.claude-opus-4-6-v1"
 
     # Chat widget model (Haiku — lightweight, fast, stays within Bedrock)
     CHAT_MODEL: str = "us.anthropic.claude-haiku-3-5-20241022"
+
+    # Azure AI Foundry / Azure OpenAI (image generation)
+    # Set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY to use Azure Foundry.
+    # Leave blank to fall back to standard OpenAI (OPENAI_API_KEY).
+    AZURE_OPENAI_ENDPOINT: Optional[str] = None
+    AZURE_OPENAI_API_KEY: Optional[str] = None
+    AZURE_OPENAI_API_VERSION: str = "2025-04-01-preview"
+    # Standard OpenAI fallback
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1.5"
 
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None

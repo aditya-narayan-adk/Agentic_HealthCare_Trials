@@ -113,6 +113,11 @@ export const companyAPI = {
       method: "PATCH",
       body: JSON.stringify({ locations }),
     }),
+  deleteAccount: (password) =>
+    request("/company/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    }),
 };
 
 // ─── Brand Kit ───────────────────────────────────────────────────────────────
@@ -351,6 +356,11 @@ export const adsAPI = {
 
   getVoiceTranscript: (conversationId) =>
     request(`/advertisements/voice-conversations/${conversationId}/transcript`),
+
+  // Returns a short-lived signed WebSocket URL for the ElevenLabs browser SDK.
+  // No auth required — designed for embedded landing page use.
+  getVoiceSessionToken: (adId) =>
+    request(`/advertisements/${adId}/voice-session/token`),
 };
 
 // ─── M7/M15: Analytics ───────────────────────────────────────────────────────

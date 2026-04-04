@@ -86,7 +86,7 @@ class VoicebotAgentService:
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{ELEVENLABS_BASE}/v1/convai/conversations/token",
+                f"{ELEVENLABS_BASE}/v1/convai/conversation/get-signed-url",
                 headers=self._headers,
                 params={"agent_id": agent_id},
                 timeout=15.0,
