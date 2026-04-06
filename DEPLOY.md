@@ -47,11 +47,7 @@ aws ecs update-service --cluster agentic-healthcare-cluster --service frontend-s
 
 ### 5. Monitor Deployment
 ```bash
-aws ecs describe-services \
-  --cluster agentic-healthcare-cluster \
-  --services frontend-service backend-service \
-  --region us-east-1 \
-  --query 'services[*].{name:serviceName,running:runningCount,desired:desiredCount,failed:deployments[0].failedTasks,rollout:deployments[0].rolloutState}'
+aws ecs describe-services --cluster agentic-healthcare-cluster --services frontend-service backend-service --region us-east-1 --query "services[*].{name:serviceName,running:runningCount,desired:desiredCount,failed:deployments[0].failedTasks,rollout:deployments[0].rolloutState}"     
 ```
 
 Wait until both show `"rollout": "COMPLETED"`. Takes ~3–5 minutes.

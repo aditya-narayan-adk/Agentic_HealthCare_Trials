@@ -21,7 +21,8 @@ async def _security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    if not settings.DEBUG:
+    # HSTS only makes sense when served over HTTPS — skip if no HTTPS configured.
+    if not settings.DEBUG and os.getenv("ENABLE_HSTS", "false").lower() == "true":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # Hosted landing pages (/static/pages/*) are public and may embed widgets —
     # skip X-Frame-Options for those paths only.
@@ -59,7 +60,10 @@ app.middleware("http")(_security_headers)
 # "null" is intentionally excluded: it allows CSRF from file:// and sandboxed iframes.
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000",
+    "http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000,"
+    "http://agentic-healthcare-alb-1250466557.us-east-1.elb.amazonaws.com,"
+    "https://agentic-healthcare-alb-1250466557.us-east-1.elb.amazonaws.com,"
+    "http://clinadspro.com,https://clinadspro.com",
 )
 _ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
