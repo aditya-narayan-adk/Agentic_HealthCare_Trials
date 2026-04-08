@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None
     ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL"  # Default: Rachel
+    ELEVENLABS_PHONE_NUMBER_ID: Optional[str] = None  # Phone number ID for outbound calls
 
     # File storage
     UPLOAD_DIR: str = "./uploads"

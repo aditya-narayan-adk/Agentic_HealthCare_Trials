@@ -67,6 +67,7 @@ async def init_db():
             _sql = __import__("sqlalchemy").text
 
             _sqlite_cols = [
+                "ALTER TABLE chat_sessions ADD COLUMN updated_at DATETIME;",
                 "ALTER TABLE advertisement_documents ADD COLUMN content TEXT;",
                 "ALTER TABLE advertisements ADD COLUMN campaign_category VARCHAR(64);",
                 "ALTER TABLE advertisements ADD COLUMN questionnaire JSON;",
@@ -125,6 +126,15 @@ async def init_db():
         await _add_column_if_missing(conn,
             "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS page_name VARCHAR(256);")
 
+        # chat_sessions unique index (safe to re-run — uses IF NOT EXISTS)
+        try:
+            await conn.execute(_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_session "
+                "ON chat_sessions (campaign_id, session_id);"
+            ))
+        except Exception:
+            pass
+
         # Deduplicate skill_configs before adding unique constraint.
         try:
             await conn.execute(_sql("""
@@ -148,21 +158,27 @@ async def init_db():
             pass
 
         # Migrate userrole enum values (PostgreSQL enums only).
-        for new_role in ("STUDY_COORDINATOR", "PROJECT_MANAGER", "ETHICS_MANAGER"):
-            try:
-                await conn.execute(_sql(
-                    f"ALTER TYPE userrole ADD VALUE IF NOT EXISTS '{new_role}';"
-                ))
-            except Exception:
-                pass
+        # ALTER TYPE ... ADD VALUE cannot run inside a transaction block — use AUTOCOMMIT.
+        async with engine.connect() as _ac:
+            await _ac.execution_options(isolation_level="AUTOCOMMIT")
+            for new_role in ("STUDY_COORDINATOR", "PROJECT_MANAGER", "ETHICS_MANAGER"):
+                try:
+                    await _ac.execute(_sql(
+                        f"ALTER TYPE userrole ADD VALUE IF NOT EXISTS '{new_role}';"
+                    ))
+                except Exception:
+                    pass  # value already exists
 
         # Migrate old role names to new ones.
-        await conn.execute(_sql(
-            "UPDATE users SET role = 'STUDY_COORDINATOR' WHERE role = 'ADMIN';"
-        ))
-        await conn.execute(_sql(
-            "UPDATE users SET role = 'PROJECT_MANAGER' WHERE role = 'REVIEWER';"
-        ))
-        await conn.execute(_sql(
-            "UPDATE users SET role = 'ETHICS_MANAGER' WHERE role = 'ETHICS_REVIEWER';"
-        ))
+        try:
+            await conn.execute(_sql(
+                "UPDATE users SET role = 'STUDY_COORDINATOR' WHERE role = 'ADMIN';"
+            ))
+            await conn.execute(_sql(
+                "UPDATE users SET role = 'PROJECT_MANAGER' WHERE role = 'REVIEWER';"
+            ))
+            await conn.execute(_sql(
+                "UPDATE users SET role = 'ETHICS_MANAGER' WHERE role = 'ETHICS_REVIEWER';"
+            ))
+        except Exception:
+            pass
