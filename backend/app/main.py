@@ -62,23 +62,17 @@ app = FastAPI(
 
 app.middleware("http")(_security_headers)
 
-# CORS — env-driven for production; sensible dev defaults.
-# "null" is intentionally excluded: it allows CSRF from file:// and sandboxed iframes.
-_raw_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000,"
-    "http://agentic-healthcare-alb-1250466557.us-east-1.elb.amazonaws.com,"
-    "https://agentic-healthcare-alb-1250466557.us-east-1.elb.amazonaws.com,"
-    "http://clinadspro.com,https://clinadspro.com",
-)
-_ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-
+# CORS — open to all origins.
+# Real security is enforced by JWT on every request; CORS is browser-level only.
+# allow_credentials must be False when allow_origins=["*"] (Starlette constraint).
+# The frontend uses Authorization: Bearer <token>, not cookies, so credentials
+# mode is never 'include' — False is correct here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["*"],
 )
 
 # Static file serving — logos and brand assets under ./static/

@@ -13,14 +13,17 @@ Protocol documents (campaign-specific) are stored separately from company docume
 """
 
 import asyncio
+import base64
 import logging
 import os
 import mimetypes
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+import uuid as uuid_mod
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Optional
+from sqlalchemy.orm.attributes import flag_modified
+from typing import Any, Dict, List, Optional
 
 from app.db.database import get_db
 from app.models.models import (
@@ -42,6 +45,11 @@ from app.services.storage.extractor import extract_text, url_to_disk_path, BACKE
 
 router = APIRouter(prefix="/advertisements", tags=["Advertisements"])
 logger = logging.getLogger(__name__)
+
+# In-memory store for chunked uploads.
+# Keyed by upload_id (UUID string). Each entry holds metadata and received chunks.
+# Safe with single-worker uvicorn; data is lost on restart (uploads are short-lived).
+_upload_sessions: Dict[str, Any] = {}
 
 ALLOWED_PROTOCOL_TYPES = {
     "application/pdf",
@@ -175,6 +183,7 @@ async def generate_questionnaire(
         raise HTTPException(status_code=500, detail=f"Questionnaire generation failed: {e}")
 
     ad.questionnaire = questionnaire
+    flag_modified(ad, "questionnaire")
     return ad
 
 
@@ -196,6 +205,7 @@ async def update_questionnaire(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
     ad.questionnaire = body.questionnaire
+    flag_modified(ad, "questionnaire")
     return ad
 
 
@@ -260,6 +270,117 @@ async def upload_protocol_document(
         advertisement_id=ad_id,
         doc_type=doc_type,
         title=title,
+        content=content,
+        file_path=file_path,
+        priority=10,
+    )
+    db.add(doc)
+    await db.flush()
+    return doc
+
+
+# ─── Chunked upload (WAF body-size workaround) ────────────────────────────────
+# CloudFront WAF blocks request bodies > 8 KB (SizeRestrictions_BODY rule).
+# These three endpoints split a file upload into small JSON requests that each
+# stay well under the limit.  The original multipart endpoint is kept for
+# direct/internal use.
+
+@router.post("/{ad_id}/documents/start")
+async def start_document_upload(
+    ad_id: str,
+    doc_type:     str = Body(...),
+    title:        str = Body(...),
+    filename:     str = Body(...),
+    content_type: str = Body(...),
+    total_chunks: int = Body(...),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Begin a chunked upload session. Returns an upload_id for subsequent calls."""
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    if content_type not in ALLOWED_PROTOCOL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
+        )
+
+    upload_id = str(uuid_mod.uuid4())
+    _upload_sessions[upload_id] = {
+        "ad_id":        ad_id,
+        "company_id":   user.company_id,
+        "doc_type":     doc_type,
+        "title":        title,
+        "filename":     filename,
+        "content_type": content_type,
+        "total_chunks": total_chunks,
+        "chunks":       {},   # chunk_index -> bytes
+    }
+    return {"upload_id": upload_id}
+
+
+@router.post("/{ad_id}/documents/chunk")
+async def upload_document_chunk(
+    ad_id:       str,
+    upload_id:   str = Body(...),
+    chunk_index: int = Body(...),
+    data:        str = Body(...),   # base64-encoded chunk bytes
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+):
+    """Receive one base64-encoded chunk for an in-progress upload."""
+    session = _upload_sessions.get(upload_id)
+    if not session or session["ad_id"] != ad_id or session["company_id"] != user.company_id:
+        raise HTTPException(status_code=404, detail="Upload session not found")
+
+    try:
+        session["chunks"][chunk_index] = base64.b64decode(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 chunk data")
+
+    return {"received": chunk_index}
+
+
+@router.post("/{ad_id}/documents/finalize", response_model=AdvertisementDocumentOut)
+async def finalize_document_upload(
+    ad_id:     str,
+    upload_id: str = Body(...),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assemble all chunks and create the AdvertisementDocument record."""
+    session = _upload_sessions.pop(upload_id, None)
+    if not session or session["ad_id"] != ad_id or session["company_id"] != user.company_id:
+        raise HTTPException(status_code=404, detail="Upload session not found")
+
+    expected = session["total_chunks"]
+    if len(session["chunks"]) != expected or any(
+        i not in session["chunks"] for i in range(expected)
+    ):
+        raise HTTPException(status_code=400, detail="Incomplete upload — missing chunks")
+
+    file_bytes = b"".join(session["chunks"][i] for i in range(expected))
+
+    file_path = await file_storage.save_bytes(
+        data=file_bytes,
+        subfolder=f"docs/{user.company_id}/{ad_id}",
+        filename=session["filename"],
+    )
+
+    disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+    content   = extract_text(disk_path)
+
+    doc = AdvertisementDocument(
+        company_id=user.company_id,
+        advertisement_id=ad_id,
+        doc_type=session["doc_type"],
+        title=session["title"],
         content=content,
         file_path=file_path,
         priority=10,
@@ -344,6 +465,8 @@ async def generate_strategy(
 
     ad.strategy_json = strategy
     ad.questionnaire = questionnaire
+    flag_modified(ad, "strategy_json")
+    flag_modified(ad, "questionnaire")
     ad.status = AdStatus.STRATEGY_CREATED
 
     # For voicebot campaigns, auto-populate a voice recommendation so the
@@ -364,6 +487,7 @@ async def generate_strategy(
                 "reason":     rec["reason"],
             }
             ad.bot_config = cfg
+            flag_modified(ad, "bot_config")
         except Exception as _ve:
             logger.warning("Voice recommendation skipped for ad %s: %s", ad_id, _ve)
 
@@ -394,6 +518,8 @@ async def submit_for_review(
 
     ad.website_reqs = review_output.get("website_requirements")
     ad.ad_details = review_output.get("ad_details")
+    flag_modified(ad, "website_reqs")
+    flag_modified(ad, "ad_details")
     ad.status = AdStatus.UNDER_REVIEW
 
     return ad
@@ -909,6 +1035,7 @@ async def minor_edit_strategy(
         node = node[key]
     node[keys[-1]] = body.new_value
     ad.strategy_json = strategy
+    flag_modified(ad, "strategy_json")
 
     # Audit review
     audit = Review(
@@ -976,6 +1103,7 @@ async def rewrite_strategy(
         raise HTTPException(status_code=500, detail=f"Strategy rewrite failed: {e}")
 
     ad.strategy_json = strategy
+    flag_modified(ad, "strategy_json")
     ad.status = AdStatus.STRATEGY_CREATED
 
     # Audit review
@@ -1086,6 +1214,7 @@ async def update_bot_config(
     merged = dict(ad.bot_config or {})
     merged.update(body.model_dump(exclude_unset=True))
     ad.bot_config = merged
+    flag_modified(ad, "bot_config")
     await db.commit()
     return ad
 

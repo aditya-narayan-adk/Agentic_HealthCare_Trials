@@ -41,15 +41,10 @@ async def _background_train(company_id: str) -> None:
 
 
 async def _background_train_and_mark(company_id: str) -> None:
-    """Like _background_train but also marks the company as onboarded on success."""
+    """Run AI skill training in the background. Company is already marked onboarded before this runs."""
     async with async_session_factory() as db:
         try:
             await TrainingService(db).train_company_skills(company_id)
-            company_result = await db.execute(select(Company).where(Company.id == company_id))
-            company = company_result.scalar_one_or_none()
-            if company:
-                company.onboarded = True
-                await db.commit()
         except Exception as exc:
             logger.error("Background training failed for company %s: %s", company_id, exc)
 
@@ -150,13 +145,21 @@ async def upload_document(
 async def trigger_training(
     background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Trigger AI Training (skill-creator) — runs in background to avoid gateway timeouts.
     Returns 202 immediately; training (Claude × 2 skills) continues asynchronously.
-    1. Read skill.md templates for Curator and Reviewer
-    2. Fill placeholders with company-specific data from onboarding
-    3. Generate customized skill.md files and mark company as onboarded
+    1. Mark company as onboarded immediately so the user can access the platform.
+    2. Read skill.md templates for Curator and Reviewer.
+    3. Fill placeholders with company-specific data from onboarding.
+    4. Generate customized skill.md files in the background.
     """
+    company_result = await db.execute(select(Company).where(Company.id == user.company_id))
+    company = company_result.scalar_one_or_none()
+    if company and not company.onboarded:
+        company.onboarded = True
+        await db.commit()
+
     background_tasks.add_task(_background_train_and_mark, user.company_id)
     return {"status": "training_started", "company_id": user.company_id}

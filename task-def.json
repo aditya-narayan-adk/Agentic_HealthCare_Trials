@@ -8,24 +8,61 @@
   "memory": "2048",
   "volumes": [
     {
-      "name": "efs-storage",
+      "name": "efs-uploads",
       "efsVolumeConfiguration": {
         "fileSystemId": "fs-0659fc740beab1a68",
-        "rootDirectory": "/",
-        "transitEncryption": "ENABLED"
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-0551a0032cdc4be17",
+          "iam": "ENABLED"
+        }
+      }
+    },
+    {
+      "name": "efs-outputs",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0659fc740beab1a68",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-06cba660d7961b136",
+          "iam": "ENABLED"
+        }
+      }
+    },
+    {
+      "name": "efs-static-logos",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0659fc740beab1a68",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-0030e2dc9bdc63e4f",
+          "iam": "ENABLED"
+        }
+      }
+    },
+    {
+      "name": "efs-db",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0659fc740beab1a68",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-06ee9a3140ae7369a",
+          "iam": "ENABLED"
+        }
       }
     }
   ],
   "containerDefinitions": [
     {
       "name": "backend",
-      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v2",
+      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v4",
       "portMappings": [{"containerPort": 8000, "protocol": "tcp"}],
       "essential": true,
       "mountPoints": [
-        {"sourceVolume": "efs-storage", "containerPath": "/app/uploads", "readOnly": false},
-        {"sourceVolume": "efs-storage", "containerPath": "/app/outputs", "readOnly": false},
-        {"sourceVolume": "efs-storage", "containerPath": "/app/static/logos", "readOnly": false}
+        {"sourceVolume": "efs-uploads",      "containerPath": "/app/uploads",      "readOnly": false},
+        {"sourceVolume": "efs-outputs",      "containerPath": "/app/outputs",      "readOnly": false},
+        {"sourceVolume": "efs-static-logos", "containerPath": "/app/static/logos", "readOnly": false},
+        {"sourceVolume": "efs-db",           "containerPath": "/db",               "readOnly": false}
       ],
       "environment": [
         {"name": "USE_BEDROCK",        "value": "true"},
@@ -33,11 +70,11 @@
         {"name": "BEDROCK_MODEL",      "value": "us.anthropic.claude-sonnet-4-6"},
         {"name": "ELEVENLABS_VOICE_ID","value": "EXAVITQu4vr4xnSDxMaL"},
         {"name": "DEBUG",              "value": "false"},
-        {"name": "ALLOWED_ORIGINS",    "value": "https://clinadspro.com,https://d2s8k22yb5c8me.cloudfront.net"}
+        {"name": "ALLOWED_ORIGINS",    "value": "https://d2s8k22yb5c8me.cloudfront.net,http://localhost:5173,http://localhost:3000,http://localhost:8000"},
+        {"name": "DATABASE_URL",       "value": "sqlite+aiosqlite:////db/marketing_platform.db"}
       ],
       "secrets": [
         {"name": "SECRET_KEY",          "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:SECRET_KEY::"},
-        {"name": "DATABASE_URL",        "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:DATABASE_URL::"},
         {"name": "ELEVENLABS_API_KEY",  "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:ELEVENLABS_API_KEY::"}
       ],
       "logConfiguration": {

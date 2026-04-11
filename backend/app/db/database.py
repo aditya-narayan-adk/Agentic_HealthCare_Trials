@@ -13,8 +13,19 @@ from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
 _is_postgres = settings.DATABASE_URL.startswith("postgresql")
-_connect_args = {"ssl": "require"} if _is_postgres else {}
-_pool_kwargs = {"pool_size": 10, "max_overflow": 20} if _is_postgres else {}
+
+if _is_postgres:
+    _connect_args = {"ssl": "require"}
+    _pool_kwargs  = {"pool_size": 10, "max_overflow": 20}
+else:
+    # SQLite on EFS: single-writer safe settings.
+    # - timeout=30: retry busy-locked DB for up to 30s before raising
+    # - check_same_thread=False: required for async (aiosqlite uses threads)
+    # - journal_mode=DELETE (default): safe on NFS/EFS; WAL uses shm which
+    #   breaks on network filesystems
+    _connect_args = {"timeout": 30, "check_same_thread": False}
+    _pool_kwargs  = {}
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
@@ -44,12 +55,22 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-async def _add_column_if_missing(conn, sql: str) -> None:
-    """Run an ALTER TABLE ADD COLUMN, ignoring errors if the column already exists."""
+async def _run_migration(conn, sql: str) -> None:
+    """Run a migration statement in a savepoint so a failure never aborts the outer transaction."""
+    _text = __import__("sqlalchemy").text
     try:
-        await conn.execute(__import__("sqlalchemy").text(sql))
+        await conn.execute(_text("SAVEPOINT _mig"))
+        await conn.execute(_text(sql))
+        await conn.execute(_text("RELEASE SAVEPOINT _mig"))
     except Exception:
-        pass  # column already exists or DB doesn't support IF NOT EXISTS
+        try:
+            await conn.execute(_text("ROLLBACK TO SAVEPOINT _mig"))
+        except Exception:
+            pass
+
+
+# Keep old name as alias so nothing else breaks.
+_add_column_if_missing = _run_migration
 
 
 async def init_db():
@@ -146,86 +167,101 @@ async def init_db():
         await _add_column_if_missing(conn,
             "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS page_name VARCHAR(256);")
 
+        # chat_sessions.campaign_id — added after initial table creation.
+        await _run_migration(conn,
+            "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS campaign_id VARCHAR;")
+        # Add FK constraint separately (IF NOT EXISTS on constraints needs PG15+, use DO block).
+        await _run_migration(conn, """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'chat_sessions'::regclass
+                      AND conname = 'chat_sessions_campaign_id_fkey'
+                ) THEN
+                    ALTER TABLE chat_sessions
+                        ADD CONSTRAINT chat_sessions_campaign_id_fkey
+                        FOREIGN KEY (campaign_id) REFERENCES advertisements(id) ON DELETE CASCADE;
+                END IF;
+            END $$;
+        """)
+        # Remove sessions that have no campaign_id (legacy rows before this column existed).
+        await _run_migration(conn, "DELETE FROM chat_sessions WHERE campaign_id IS NULL;")
+
         # Recreate platform_connections FKs with ON DELETE CASCADE so that
         # deleting a company or user automatically removes their connections.
-        try:
-            await conn.execute(_sql("""
-                DO $$
-                DECLARE
-                    _cn text;
-                BEGIN
-                    SELECT conname INTO _cn
-                    FROM pg_constraint
+        await _run_migration(conn, """
+            DO $$
+            DECLARE _cn text;
+            BEGIN
+                SELECT conname INTO _cn FROM pg_constraint
+                WHERE conrelid = 'platform_connections'::regclass AND contype = 'f'
+                  AND confrelid = 'companies'::regclass;
+                IF _cn IS NOT NULL AND _cn != 'platform_connections_company_id_fkey' THEN
+                    EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
+                END IF;
+            END $$;
+        """)
+        await _run_migration(conn, """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
                     WHERE conrelid = 'platform_connections'::regclass
-                      AND contype = 'f'
-                      AND confrelid = 'companies'::regclass;
-                    IF _cn IS NOT NULL THEN
-                        EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
-                    END IF;
-                END $$;
-            """))
-            await conn.execute(_sql(
-                "ALTER TABLE platform_connections "
-                "ADD CONSTRAINT platform_connections_company_id_fkey "
-                "FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;"
-            ))
-        except Exception:
-            pass  # constraint already correct
-
-        try:
-            await conn.execute(_sql("""
-                DO $$
-                DECLARE
-                    _cn text;
-                BEGIN
-                    SELECT conname INTO _cn
-                    FROM pg_constraint
+                      AND conname = 'platform_connections_company_id_fkey'
+                ) THEN
+                    ALTER TABLE platform_connections
+                        ADD CONSTRAINT platform_connections_company_id_fkey
+                        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;
+                END IF;
+            END $$;
+        """)
+        await _run_migration(conn, """
+            DO $$
+            DECLARE _cn text;
+            BEGIN
+                SELECT conname INTO _cn FROM pg_constraint
+                WHERE conrelid = 'platform_connections'::regclass AND contype = 'f'
+                  AND confrelid = 'users'::regclass;
+                IF _cn IS NOT NULL AND _cn != 'platform_connections_user_id_fkey' THEN
+                    EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
+                END IF;
+            END $$;
+        """)
+        await _run_migration(conn, """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
                     WHERE conrelid = 'platform_connections'::regclass
-                      AND contype = 'f'
-                      AND confrelid = 'users'::regclass;
-                    IF _cn IS NOT NULL THEN
-                        EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
-                    END IF;
-                END $$;
-            """))
-            await conn.execute(_sql(
-                "ALTER TABLE platform_connections "
-                "ADD CONSTRAINT platform_connections_user_id_fkey "
-                "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;"
-            ))
-        except Exception:
-            pass  # constraint already correct
+                      AND conname = 'platform_connections_user_id_fkey'
+                ) THEN
+                    ALTER TABLE platform_connections
+                        ADD CONSTRAINT platform_connections_user_id_fkey
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+                END IF;
+            END $$;
+        """)
 
-        # chat_sessions unique index (safe to re-run — uses IF NOT EXISTS)
-        try:
-            await conn.execute(_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_session "
-                "ON chat_sessions (campaign_id, session_id);"
-            ))
-        except Exception:
-            pass
+        # chat_sessions unique index
+        await _run_migration(conn,
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_session "
+            "ON chat_sessions (campaign_id, session_id);")
 
         # Deduplicate skill_configs before adding unique constraint.
-        try:
-            await conn.execute(_sql("""
-                DELETE FROM skill_configs
-                WHERE id NOT IN (
-                    SELECT DISTINCT ON (company_id, skill_type) id
-                    FROM skill_configs
-                    ORDER BY company_id, skill_type, version DESC, updated_at DESC
-                );
-            """))
-        except Exception:
-            pass
+        await _run_migration(conn, """
+            DELETE FROM skill_configs
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (company_id, skill_type) id
+                FROM skill_configs
+                ORDER BY company_id, skill_type, version DESC, updated_at DESC
+            );
+        """)
 
         # Unique constraint for ON CONFLICT upsert in trainer.py
-        try:
-            await conn.execute(_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_skill_configs_company_skill "
-                "ON skill_configs (company_id, skill_type);"
-            ))
-        except Exception:
-            pass
+        await _run_migration(conn,
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_skill_configs_company_skill "
+            "ON skill_configs (company_id, skill_type);")
 
         # Migrate userrole enum values (PostgreSQL enums only).
         # ALTER TYPE ... ADD VALUE cannot run inside a transaction block — use AUTOCOMMIT.
@@ -240,10 +276,7 @@ async def init_db():
                     pass  # value already exists
 
         # Normalise role column to enum member NAMES (what SQLAlchemy stores).
-        try:
-            await conn.execute(_sql("UPDATE users SET role = 'STUDY_COORDINATOR' WHERE role IN ('ADMIN', 'study_coordinator');"))
-            await conn.execute(_sql("UPDATE users SET role = 'PROJECT_MANAGER'   WHERE role IN ('REVIEWER', 'project_manager');"))
-            await conn.execute(_sql("UPDATE users SET role = 'ETHICS_MANAGER'    WHERE role IN ('ETHICS_REVIEWER', 'ethics_manager');"))
-            await conn.execute(_sql("UPDATE users SET role = 'PUBLISHER'         WHERE role = 'publisher';"))
-        except Exception:
-            pass
+        await _run_migration(conn, "UPDATE users SET role = 'STUDY_COORDINATOR' WHERE role IN ('ADMIN', 'study_coordinator');")
+        await _run_migration(conn, "UPDATE users SET role = 'PROJECT_MANAGER'   WHERE role IN ('REVIEWER', 'project_manager');")
+        await _run_migration(conn, "UPDATE users SET role = 'ETHICS_MANAGER'    WHERE role IN ('ETHICS_REVIEWER', 'ethics_manager');")
+        await _run_migration(conn, "UPDATE users SET role = 'PUBLISHER'         WHERE role = 'publisher';")
