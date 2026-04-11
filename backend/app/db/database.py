@@ -103,6 +103,13 @@ async def init_db():
             await conn.execute(_sql("UPDATE users SET role = 'PROJECT_MANAGER'   WHERE role IN ('REVIEWER', 'project_manager');"))
             await conn.execute(_sql("UPDATE users SET role = 'ETHICS_MANAGER'    WHERE role IN ('ETHICS_REVIEWER', 'ethics_manager');"))
             await conn.execute(_sql("UPDATE users SET role = 'PUBLISHER'         WHERE role = 'publisher';"))
+
+            # Mark as onboarded any company that has at least one user but
+            # onboarded=0 — these were locked out due to training failures.
+            await conn.execute(_sql(
+                "UPDATE companies SET onboarded = 1 WHERE onboarded = 0 "
+                "AND id IN (SELECT DISTINCT company_id FROM users);"
+            ))
             return
 
         # ── PostgreSQL upgrade migrations ─────────────────────────────────────
@@ -138,6 +145,56 @@ async def init_db():
             "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS ad_account_name VARCHAR(256);")
         await _add_column_if_missing(conn,
             "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS page_name VARCHAR(256);")
+
+        # Recreate platform_connections FKs with ON DELETE CASCADE so that
+        # deleting a company or user automatically removes their connections.
+        try:
+            await conn.execute(_sql("""
+                DO $$
+                DECLARE
+                    _cn text;
+                BEGIN
+                    SELECT conname INTO _cn
+                    FROM pg_constraint
+                    WHERE conrelid = 'platform_connections'::regclass
+                      AND contype = 'f'
+                      AND confrelid = 'companies'::regclass;
+                    IF _cn IS NOT NULL THEN
+                        EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
+                    END IF;
+                END $$;
+            """))
+            await conn.execute(_sql(
+                "ALTER TABLE platform_connections "
+                "ADD CONSTRAINT platform_connections_company_id_fkey "
+                "FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;"
+            ))
+        except Exception:
+            pass  # constraint already correct
+
+        try:
+            await conn.execute(_sql("""
+                DO $$
+                DECLARE
+                    _cn text;
+                BEGIN
+                    SELECT conname INTO _cn
+                    FROM pg_constraint
+                    WHERE conrelid = 'platform_connections'::regclass
+                      AND contype = 'f'
+                      AND confrelid = 'users'::regclass;
+                    IF _cn IS NOT NULL THEN
+                        EXECUTE 'ALTER TABLE platform_connections DROP CONSTRAINT ' || quote_ident(_cn);
+                    END IF;
+                END $$;
+            """))
+            await conn.execute(_sql(
+                "ALTER TABLE platform_connections "
+                "ADD CONSTRAINT platform_connections_user_id_fkey "
+                "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;"
+            ))
+        except Exception:
+            pass  # constraint already correct
 
         # chat_sessions unique index (safe to re-run — uses IF NOT EXISTS)
         try:
