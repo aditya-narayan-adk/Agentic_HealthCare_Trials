@@ -63,7 +63,7 @@ SURVEY (always include):
   Nav:        Place the voice button on the LEFT and the prev/next buttons on the RIGHT inside one nav row:
               <div class="survey-nav">
                 <div class="survey-voice-row">
-                  <button class="btn-voice-call" id="survey-voice-btn">&#128222; Speak to an Agent</button>
+                  <button class="btn-voice-call" id="survey-voice-btn">&#128222; Speak to Us</button>
                 </div>
                 <div class="survey-nav-right">
                   <button class="btn-survey-prev" id="survey-prev">&#8592; Back</button>
@@ -996,7 +996,7 @@ class WebsiteAgentService:
 
   /* ── API ────────────────────────────────────────────────────────────────── */
   function apiCall(phone, scheduledFor) {{
-    var payload = scheduledFor ? {{phone:phone,scheduled_for:scheduledFor}} : {{phone:phone}};
+    var payload = scheduledFor ? {{phone_number:phone,scheduled_for:scheduledFor}} : {{phone_number:phone}};
     return fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-call/request', {{
       method:'POST',
       headers:{{'Content-Type':'application/json'}},
@@ -1708,7 +1708,7 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
 
     <div class="survey-nav">
       <div class="survey-voice-row">
-        <button class="btn-voice-call" id="survey-voice-btn">&#128222; Speak to an Agent</button>
+        <button class="btn-voice-call" id="survey-voice-btn">&#128222; Speak to Us</button>
       </div>
       <div class="survey-nav-right">
         <button class="btn-survey-prev" id="survey-prev">&#8592; Back</button>
