@@ -219,6 +219,11 @@ export default function PublisherDashboard() {
   const [connectingMeta,  setConnectingMeta]  = useState(false);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
+  // Optimizer state — lifted here so results persist across tab switches
+  const [optimizerSuggestions,   setOptimizerSuggestions]   = useState(null);
+  const [optimizerRunning,       setOptimizerRunning]       = useState(false);
+  const [optimizerStep,          setOptimizerStep]          = useState(0);
+
   const activeTab = PATH_TO_TAB[location.pathname] || "overview";
 
   useEffect(() => {
@@ -572,7 +577,17 @@ export default function PublisherDashboard() {
       )}
 
       {/* ── Analytics ── */}
-      {activeTab === "analytics" && <PublisherAnalytics ads={published} />}
+      {activeTab === "analytics" && (
+        <PublisherAnalytics
+          ads={published}
+          suggestions={optimizerSuggestions}
+          setSuggestions={setOptimizerSuggestions}
+          optimizing={optimizerRunning}
+          setOptimizing={setOptimizerRunning}
+          optimizerStep={optimizerStep}
+          setOptimizerStep={setOptimizerStep}
+        />
+      )}
 
       {/* ── Settings ── */}
       {activeTab === "settings" && (
@@ -2307,7 +2322,7 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
         Publish to {platformName} via Marketing API
       </p>
       <p style={{ fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: "16px" }}>
-        All settings below are sent directly to Meta's Marketing API — no manual setup in Ads Manager needed. Ads start <strong>PAUSED</strong> so you can activate when ready.
+        All settings below are sent directly to Meta's Marketing API — no manual setup in Ads Manager needed. Ads go <strong>ACTIVE</strong> immediately and can be paused from the Manage Ads tab.
       </p>
 
       {/* Connection status banner for OAuth platforms */}
@@ -2494,7 +2509,7 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
             <CheckCircle2 size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
             <p style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--color-accent)" }}>
-              Campaign created on Meta — ads are PAUSED pending your review
+              Campaign created on Meta — ads are ACTIVE and serving
             </p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: 10 }}>
@@ -3268,14 +3283,11 @@ const OPTIMIZER_STEPS = [
   { label: "Generating recommendations" },
 ];
 
-function PublisherAnalytics({ ads }) {
+function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setOptimizing, optimizerStep, setOptimizerStep }) {
   const [selectedAd,    setSelectedAd]    = useState(null);
   const [datePreset,    setDatePreset]    = useState("last_30d");
   const [insights,      setInsights]      = useState(null);   // { rows: [...] }
   const [syncing,       setSyncing]       = useState(false);
-  const [suggestions,   setSuggestions]   = useState(null);
-  const [optimizing,    setOptimizing]    = useState(false);
-  const [optimizerStep, setOptimizerStep] = useState(0);
 
   useEffect(() => {
     if (!optimizing) { setOptimizerStep(0); return; }

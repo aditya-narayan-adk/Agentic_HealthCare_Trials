@@ -232,13 +232,13 @@ class MetaAdsService:
     # ─── Step 2: Create Campaign ───────────────────────────────────────────────
 
     async def create_campaign(self, name: str) -> str:
-        """Create a campaign (OUTCOME_AWARENESS, PAUSED) and return its ID."""
+        """Create a campaign (OUTCOME_TRAFFIC, ACTIVE) and return its ID."""
         result = await self._post(
             f"{self.ad_account_id}/campaigns",
             {
                 "name": name,
                 "objective": "OUTCOME_TRAFFIC",
-                "status": "PAUSED",
+                "status": "ACTIVE",
                 # Required: JSON-encoded empty array for non-special campaigns
                 "special_ad_categories": "[]",
                 # Required when not using campaign budget optimisation (CBO)
@@ -259,7 +259,7 @@ class MetaAdsService:
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
     ) -> str:
-        """Create an ad set (PAUSED) and return its ID."""
+        """Create an ad set (ACTIVE) and return its ID."""
         targeting = {
             "geo_locations": {"countries": targeting_countries or ["AU"]},
             "age_min": 18,
@@ -278,7 +278,7 @@ class MetaAdsService:
             # Links this ad set to the Facebook Page — eliminates the manual
             # "which page?" prompt in Meta Ads Manager when activating.
             "promoted_object": json.dumps({"page_id": page_id}),
-            "status": "PAUSED",
+            "status": "ACTIVE",
         }
         if start_time:
             data["start_time"] = start_time
@@ -385,14 +385,14 @@ class MetaAdsService:
     # ─── Step 5: Create Ad ────────────────────────────────────────────────────
 
     async def create_ad(self, name: str, adset_id: str, creative_id: str) -> str:
-        """Create the ad (PAUSED) and return its ID."""
+        """Create the ad (ACTIVE) and return its ID."""
         result = await self._post(
             f"{self.ad_account_id}/ads",
             {
                 "name": name,
                 "adset_id": adset_id,
                 "creative": json.dumps({"creative_id": creative_id}),
-                "status": "PAUSED",
+                "status": "ACTIVE",
             },
         )
         return result["id"]
@@ -505,9 +505,8 @@ class MetaAdsService:
         """
         Full pipeline: images → campaign → ad set → creatives → ads.
 
-        All ads start PAUSED so the publisher can review in Meta Ads Manager
-        before activating.  Returns campaign_id, adset_id, ad_ids, and a
-        direct link to the Ads Manager.
+        All ads start ACTIVE and begin serving immediately.
+        Returns campaign_id, adset_id, ad_ids, and a direct link to the Ads Manager.
         """
         to_publish = (
             [creatives[i] for i in selected_indices if i < len(creatives)]
@@ -594,6 +593,6 @@ class MetaAdsService:
             "adset_id": adset_id,
             "ad_ids": ad_ids,
             "ads_manager_url": ads_manager_url,
-            "status": "paused",
-            "note": "All ads created in PAUSED state. Activate them in Meta Ads Manager after review.",
+            "status": "active",
+            "note": "All ads created in ACTIVE state and begin serving immediately.",
         }

@@ -939,8 +939,8 @@ async def distribute_to_meta(
         targeting_countries: comma-separated ISO country codes  (e.g. "US,GB")
         selected_creatives : list of creative indexes to publish
 
-    All created ads start in PAUSED state so the publisher can review them in
-    Meta Ads Manager before activating.
+    All created ads start ACTIVE and begin serving immediately.
+    They can be paused from the Manage Ads tab at any time.
     """
     from app.services.meta_ads_service import MetaAdsService
     from app.models.models import PlatformConnection

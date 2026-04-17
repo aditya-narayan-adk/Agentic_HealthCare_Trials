@@ -7,10 +7,11 @@
  * Styles: use classes from index.css only — no raw Tailwind color utilities.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
 import { adsAPI, usersAPI } from "../../services/api";
+import { useGeneration } from "../../contexts/GenerationContext";
 import {
   Megaphone, Users, BarChart3, Clock, Plus, Eye,
   CheckCircle, ClipboardList, ArrowRight, UserCheck,
@@ -178,19 +179,33 @@ export default function AdminDashboard() {
   const [users,   setUsers]   = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const { isGenerating } = useGeneration();
+  const wasGenerating = useRef(false);
+
+  const fetchAds = () => {
     const role = JSON.parse(localStorage.getItem("user") || "{}").role;
     const adsReq   = adsAPI.list().catch(() => []);
     const usersReq = role === "study_coordinator" ? usersAPI.list().catch(() => []) : Promise.resolve([]);
     Promise.all([adsReq, usersReq])
       .then(([a, u]) => { setAds(a); setUsers(u); })
       .finally(() => setLoading(false));
-  }, []);
+  };
 
-  const active         = ads.filter((a) => !["published"].includes(a.status));
-  const published      = ads.filter((a) => a.status === "published");
-  const inReview       = ads.filter((a) => ["under_review", "ethics_review"].includes(a.status));
-  const totalPatients  = ads.reduce((sum, a) => sum + (a.patients_required || 0), 0);
+  useEffect(() => { fetchAds(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh the list as soon as strategy generation finishes so the newly
+  // ready campaign appears without the user having to reload the page.
+  useEffect(() => {
+    if (!isGenerating && wasGenerating.current) fetchAds();
+    wasGenerating.current = isGenerating;
+  }, [isGenerating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Hide campaigns that are still in DRAFT (strategy not yet built).
+  const visible        = ads.filter((a) => a.status !== "draft");
+  const active         = visible.filter((a) => a.status !== "published");
+  const published      = visible.filter((a) => a.status === "published");
+  const inReview       = visible.filter((a) => ["under_review", "ethics_review"].includes(a.status));
+  const totalPatients  = visible.reduce((sum, a) => sum + (a.patients_required || 0), 0);
 
   const onOpen = (ad) => navigate(`/study-coordinator/campaign/${ad.id}`);
 
@@ -209,7 +224,7 @@ export default function AdminDashboard() {
 
       {/* KPI row */}
       <div className="grid grid-cols-5 gap-4 mb-8">
-        <MetricSummaryCard label="Total Campaigns"    value={loading ? "—" : ads.length}                                       icon={Megaphone} />
+        <MetricSummaryCard label="Total Campaigns"    value={loading ? "—" : visible.length}                                   icon={Megaphone} />
         <MetricSummaryCard label="Published"          value={loading ? "—" : published.length}                                 icon={BarChart3} trend={12} />
         <MetricSummaryCard label="In Review"          value={loading ? "—" : inReview.length}                                  icon={Clock} />
         <MetricSummaryCard label="Patients Required"  value={loading ? "—" : totalPatients > 0 ? totalPatients.toLocaleString() : "—"} icon={UserCheck} />

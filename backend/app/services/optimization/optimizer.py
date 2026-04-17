@@ -101,19 +101,22 @@ class OptimizerService:
             key=lambda a: str(getattr(a, "date_label", "") or getattr(a, "recorded_at", "") or ""),
         )
 
-        spends      = [float(getattr(a, "spend",       0) or 0) for a in rows]
-        clicks      = [float(getattr(a, "clicks",      0) or 0) for a in rows]
-        impressions = [float(getattr(a, "impressions", 0) or 0) for a in rows]
-        cpms        = [float(getattr(a, "cpm",         0) or 0) for a in rows]
-        date_labels = [getattr(a, "date_label", None)           for a in rows]
+        spends           = [float(getattr(a, "spend",       0) or 0) for a in rows]
+        # click_rate is stored as a percentage (e.g. 0.27 for 0.27%) — no raw clicks column
+        click_rates_pct  = [float(getattr(a, "click_rate",  0) or 0) for a in rows]
+        impressions      = [float(getattr(a, "impressions", 0) or 0) for a in rows]
+        cpms             = [float(getattr(a, "cpm",         0) or 0) for a in rows]
+        date_labels      = [getattr(a, "date_label", None)            for a in rows]
 
-        ctrs = [c / i if i > 0 else 0.0 for c, i in zip(clicks, impressions)]
+        # ctrs as ratio (0-1) for trend analysis; click_rates_pct already in % form
+        ctrs = [r / 100.0 for r in click_rates_pct]
 
-        total_spend  = sum(spends)
-        total_clicks = sum(clicks)
-        total_imps   = sum(impressions)
-        avg_ctr_pct  = round((total_clicks / total_imps * 100) if total_imps else 0.0, 4)
-        avg_cpm      = round(sum(cpms) / len(cpms) if cpms else 0.0, 2)
+        total_spend   = sum(spends)
+        total_imps    = sum(impressions)
+        # Estimate total clicks from per-row click_rate × impressions
+        total_clicks  = round(sum(ctrs[i] * impressions[i] for i in range(len(rows))))
+        avg_ctr_pct   = round(sum(click_rates_pct) / len(click_rates_pct) if click_rates_pct else 0.0, 4)
+        avg_cpm       = round(sum(cpms) / len(cpms) if cpms else 0.0, 2)
         avg_spend_day = round(total_spend / len(rows) if rows else 0.0, 2)
 
         # Marginal return: split rows into first/second half and compare CTR
@@ -156,7 +159,8 @@ class OptimizerService:
 
         # Traffic windows: rank days by CTR
         day_perf = [
-            {"date": date_labels[i], "ctr": ctrs[i], "spend": spends[i], "clicks": clicks[i]}
+            {"date": date_labels[i], "ctr": ctrs[i], "spend": spends[i],
+             "clicks": round(ctrs[i] * impressions[i])}
             for i in range(len(rows))
             if date_labels[i]
         ]
@@ -197,9 +201,9 @@ class OptimizerService:
             ctr_benchmark    = "unknown"
             primary_weakness = "insufficient data — optimise creative proactively"
         else:
-            total_clicks = sum(float(getattr(a, "clicks",      0) or 0) for a in analytics)
-            total_imps   = sum(float(getattr(a, "impressions", 0) or 0) for a in analytics)
-            ctr = total_clicks / total_imps if total_imps else 0.0
+            # click_rate is stored as percentage (e.g. 0.27 for 0.27%) — average across rows
+            click_rates_pct = [float(getattr(a, "click_rate", 0) or 0) for a in analytics]
+            ctr = (sum(click_rates_pct) / len(click_rates_pct) / 100.0) if click_rates_pct else 0.0
 
             # Industry benchmarks for awareness/traffic ads
             if ctr < 0.005:
@@ -233,12 +237,21 @@ class OptimizerService:
                 "goal":     s.get("goal", ""),
             }
 
+        # Website and creative asset context
+        website_context = {
+            "hosted_url":   ad.hosted_url or None,
+            "website_reqs": ad.website_reqs or {},   # design spec / requirements
+            "ad_details":   ad.ad_details or {},     # ad creative specifics
+            "output_files": ad.output_files or [],   # generated/uploaded asset references
+        }
+
         return {
             "is_website":       is_website,
             "engagement_level": engagement_level,
             "ctr_benchmark":    ctr_benchmark,
             "primary_weakness": primary_weakness,
             "current_creative": current_creative,
+            "website_context":  website_context,
         }
 
     # ── Reviewer context ──────────────────────────────────────────────────────
@@ -287,6 +300,7 @@ class OptimizerService:
         ca = cost_analysis
         cs = content_signals
         cc = cs.get("current_creative", {})
+        wc = cs.get("website_context", {})
 
         top_w = ca.get("top_traffic_windows", [])
         low_w = ca.get("low_traffic_windows", [])
@@ -314,6 +328,25 @@ class OptimizerService:
             f"Goal: '{cc.get('goal', '')}'"
         )
 
+        # Website + asset context for richer website/ad creative suggestions
+        website_reqs  = wc.get("website_reqs") or {}
+        ad_details    = wc.get("ad_details") or {}
+        output_files  = wc.get("output_files") or []
+        hosted_url    = wc.get("hosted_url") or "not deployed yet"
+
+        website_ctx = (
+            f"Hosted URL: {hosted_url} | "
+            f"Website requirements: {str(website_reqs)[:300]} | "
+            f"Layout/design spec: {str(website_reqs.get('layout') or website_reqs.get('design') or '')[:200]} | "
+            f"Font spec: {website_reqs.get('font') or cc.get('font') or 'not set'} | "
+            f"Color spec: {website_reqs.get('colors') or cc.get('colors') or 'not set'}"
+        )
+
+        ad_creative_ctx = (
+            f"Ad details: {str(ad_details)[:300]} | "
+            f"Output files: {[f.get('name') or f.get('url') or str(f) for f in output_files[:5]]}"
+        )
+
         reviewer_notes = (
             f"Revision requests: {reviewer_context.get('revision_requests', [])} | "
             f"Ethical concerns: {reviewer_context.get('ethical_concerns', [])} | "
@@ -325,6 +358,8 @@ Ad type: {ad.ad_type}
 Engagement level: {cs.get('engagement_level')} | CTR: {cs.get('ctr_benchmark')}
 Primary creative weakness: {cs.get('primary_weakness')}
 Current creative: {creative_ctx}
+Website context: {website_ctx}
+Ad creative assets: {ad_creative_ctx}
 
 ## Cost Signals
 Total spend: ${ca.get('total_spend', 0)} over {ca.get('data_points', 0)} days
