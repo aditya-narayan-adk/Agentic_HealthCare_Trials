@@ -289,8 +289,11 @@ class OptimizerService:
         if not is_configured():
             return self._deterministic_mock(cost_analysis, content_signals)
 
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
+
         system_prompt = (
-            "You are a precision marketing optimization engine. "
+            f"You are a precision marketing optimization engine. Today's date is {today_str}. "
             "You receive pre-computed analytics signals and return ONLY a structured JSON object. "
             "Do NOT invent data. Reference the exact numbers provided in every 'why' field. "
             "Output ONLY a raw JSON object — no markdown, no code fences, no commentary. "
@@ -375,50 +378,91 @@ Rationale: {ca.get('budget_rationale')}
 Return EXACTLY this JSON shape — no extra keys, no deviations:
 {{
   "cost_optimization": {{
-    "overall_assessment": "<1-2 sentence summary using the signals above>",
+    "overall_assessment": "<1-2 sentence summary>",
     "items": [
       {{
-        "what": "<specific, actionable budget/scheduling change>",
-        "why": "<data-driven reason — must reference actual numbers from signals>",
-        "prompt": "<self-contained AI prompt to implement or further refine this change>"
+        "what": "<one-sentence description of what to do>",
+        "why": "<data-driven reason citing actual numbers>",
+        "action_type": "set_today_budget",
+        "action_value": <recommended daily budget in USD as a plain number, e.g. 12.5>
+      }},
+      {{
+        "what": "Pause campaign every <day-of-week> from <HH:MM> to <HH:MM> and resume automatically — based on low-CTR pattern in data",
+        "why": "<cite the exact CTR % and spend $ for that window vs campaign average>",
+        "action_type": "schedule_pause",
+        "action_value": {{
+          "pause_label": "<e.g. 'Every Sunday' or 'Weekday evenings 21:00–06:00'>",
+          "pause_days":  ["<day-of-week name, e.g. Sunday — NEVER a date string>"],
+          "pause_hours": "<HH:MM-HH:MM range e.g. '00:00-23:59' for full day or '21:00-06:00' for overnight — NEVER null>"
+        }}
       }}
     ],
     "budget_distribution": {{
       "increase_days": ["<day or date>"],
-      "reduce_days": ["<day or date>"],
-      "reallocation_pct": "<percentage to shift, e.g. 25%>"
+      "reduce_days":   ["<day or date>"],
+      "reallocation_pct": "<e.g. 25%>"
     }},
     "traffic_windows": [
       {{
         "window": "<date or period>",
         "recommended_action": "<increase|reduce|pause>",
-        "reasoning": "<why, citing CTR/spend numbers>"
+        "reasoning": "<why>"
       }}
     ]
   }},
   "website_optimization": [
     {{
-      "what": "<specific creative change for website: caption text, hashtag set, color hex, font name, title copy>",
-      "why": "<data-driven reason referencing CTR/engagement numbers>",
-      "prompt": "<complete AI prompt to generate the revised element>"
+      "what": "Try this caption: '<new caption text here, 1-3 sentences>'",
+      "why":  "<data-driven reason>",
+      "action_type": "edit_caption",
+      "action_value": "<the new caption text to apply>"
+    }},
+    {{
+      "what": "Add this content block: '<brief description of what to add and where>'",
+      "why":  "<data-driven reason>",
+      "action_type": "edit_content",
+      "action_value": "<description of the content change to make — will prompt a website regeneration>"
+    }}
+  ],
+  "bot_optimization": [
+    {{
+      "what": "Switch voice to <voice name> — <short reason>",
+      "why":  "<data-driven reason>",
+      "action_type": "switch_voice",
+      "action_value": "<ElevenLabs voice_id string>"
     }}
   ],
   "advertisement_optimization": [
     {{
-      "what": "<specific creative change for ad: headline, body copy, image style, CTA phrase, hashtags, colors>",
-      "why": "<data-driven reason referencing CTR/engagement numbers>",
-      "prompt": "<complete AI prompt to generate the revised element>"
+      "what": "Try this caption: '<new ad caption, 1-2 sentences>'",
+      "why":  "<data-driven reason>",
+      "action_type": "edit_ad_caption",
+      "action_value": "<the new caption text>"
+    }},
+    {{
+      "what": "Use these hashtags: <#tag1 #tag2 #tag3 ...>",
+      "why":  "<data-driven reason>",
+      "action_type": "edit_ad_hashtags",
+      "action_value": ["<hashtag1>", "<hashtag2>", "<hashtag3>"]
+    }},
+    {{
+      "what": "Regenerate the ad image: <specific visual change instruction>",
+      "why":  "<data-driven reason>",
+      "action_type": "regenerate_creative",
+      "action_value": null
     }}
   ]
 }}
 
 Rules:
-- cost_optimization.items: exactly 2-3 items, each grounded in cost signals above.
-- website_optimization: exactly 3-4 items covering different creative elements (caption, hashtags, colors/font, title).
-- advertisement_optimization: exactly 3-4 items covering different elements (headline, body, image style, CTA).
-- Every "why" must cite a specific metric (CTR %, spend $, trend direction).
-- Every "prompt" must be self-contained — include context so an AI can execute it without this conversation.
-- Use current creative context to make "what" and "prompt" specific, not generic.
+- cost_optimization.items: exactly 2 items — one set_today_budget, one schedule_pause. Both grounded in cost signals.
+- set_today_budget action_value must be a plain number derived from past CTR/spend trends. Never a past date, never a percentage string.
+- schedule_pause: derive the day-of-week from the lowest-CTR date in the data, decide a full-day or sub-day pause window, and express it as a recurring forward schedule (day-of-week + HH:MM-HH:MM). pause_days must be day-of-week names (e.g. "Sunday"), NEVER date strings. pause_hours must always be a time range string, never null. The "what" must read as a complete, decided action the system will take — not a suggestion for the user to consider.
+- website_optimization: 2 items — one edit_caption (provide the actual new caption text), one edit_content.
+- bot_optimization: 1 item — recommend the most suitable voice for the audience (pick from available voices).
+- advertisement_optimization: 3 items — one edit_ad_caption (with actual caption text), one edit_ad_hashtags (actual hashtag list), one regenerate_creative.
+- Every "why" must cite a specific metric (CTR %, spend $, trend).
+- Items ordered by expected impact: highest delta first.
 """
 
         client   = get_async_client()
@@ -498,256 +542,152 @@ Rules:
 
         no_analytics = (data_points == 0)
 
-        cost_items = [
-            {
-                "what": (
-                    "Set an initial daily budget and publish to Meta to start collecting data"
-                    if no_analytics else
-                    f"{action_verb} daily budget based on {ctr_trend} CTR trend"
-                ),
-                "why": (
-                    "No performance data yet — launching the campaign will give you "
-                    "real CTR and spend signals to optimise from."
-                    if no_analytics else
-                    budget_rationale
-                ),
-                "prompt": (
-                    f"A new Meta ad campaign for '{goal}' targeting '{audience}' has not run yet. "
-                    f"Recommend a starting daily budget range and bidding strategy for an awareness/traffic "
-                    f"campaign. Assume a target CPA under $50 and suggest an initial test budget "
-                    f"to generate statistically meaningful CTR data (minimum impressions threshold)."
-                    if no_analytics else
-                    f"A Meta ad campaign for '{goal}' has a {ctr_trend} CTR trend "
-                    f"with avg CTR {avg_ctr}% and avg CPM ${avg_cpm} over {data_points} days "
-                    f"(total spend ${total_spend}). "
-                    f"Using marginal resource allocation principles, recommend a specific daily "
-                    f"budget reallocation strategy with exact percentages per day-of-week."
-                ),
-            }
-        ]
+        from datetime import date as _date
+        today_str_mock = _date.today().isoformat()
 
-        if top_w:
-            tw = top_w[0]
-            cost_items.append({
-                "what": (
-                    f"Concentrate 60–70% of weekly budget around {tw['date']} "
-                    f"and similar high-CTR windows"
-                ),
-                "why": (
-                    f"CTR on {tw['date']} was {round(tw['ctr'] * 100, 3)}% "
-                    f"vs campaign avg {avg_ctr}% — highest marginal return per dollar spent"
-                ),
-                "prompt": (
-                    f"A Meta ad for '{goal}' achieves its highest CTR ({round(tw['ctr'] * 100, 3)}%) "
-                    f"on {tw['date']} vs campaign avg {avg_ctr}%. "
-                    f"Generate a day-parting budget schedule that concentrates spend on "
-                    f"similar high-performance windows while reducing spend on days below "
-                    f"{round(avg_ctr * 0.8, 3)}% CTR. Return a 7-day schedule with % allocations."
-                ),
-            })
+        # set_today_budget — derive recommended budget from avg spend + trend
+        if no_analytics:
+            budget_today = round(max(5.0, total_spend / max(data_points, 1)), 2)
+            budget_what  = f"Set today's ({today_str_mock}) daily budget to ${budget_today} to start collecting data"
+            budget_why   = "No performance data yet — a modest initial budget will generate the CTR signals needed to optimise."
+        else:
+            multiplier   = 1.3 if budget_signal == "increase_on_winners" else (0.7 if budget_signal == "reduce_and_redistribute" else 1.0)
+            budget_today = round(max(1.0, (total_spend / max(data_points, 1))) * multiplier, 2)
+            budget_what  = f"Set today's ({today_str_mock}) daily budget to ${budget_today} based on {ctr_trend} CTR trend"
+            budget_why   = budget_rationale
 
+        # schedule_pause — resolve day-of-week from lowest-CTR date, set concrete hours
+        _DAY_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
         if low_w:
             lw = low_w[0]
-            cost_items.append({
-                "what": (
-                    f"Pause or reduce spend on {lw['date']} "
-                    f"(CTR {round(lw['ctr'] * 100, 3)}%) — below marginal return threshold"
-                ),
-                "why": (
-                    f"Spend on {lw['date']} returned only {round(lw['ctr'] * 100, 3)}% CTR "
-                    f"against a campaign avg of {avg_ctr}% — "
-                    f"marginal return is negative relative to opportunity cost"
-                ),
-                "prompt": (
-                    f"Analyse whether running ads on days with CTR {round(lw['ctr'] * 100, 3)}% "
-                    f"is viable when campaign avg CTR is {avg_ctr}% and avg CPM is ${avg_cpm}. "
-                    f"Propose a threshold rule (CTR floor %) below which budget should be paused, "
-                    f"and suggest where that budget should be reallocated."
-                ),
-            })
+            try:
+                from datetime import date as _dt
+                _d     = _dt.fromisoformat(lw["date"])
+                dow    = _DAY_NAMES[_d.weekday()]
+            except Exception:
+                dow = "Sunday"
+            lw_ctr_pct = round(lw["ctr"] * 100, 3)
+            pause_label = f"Every {dow}"
+            pause_days  = [dow]
+            pause_hours = "00:00-23:59"
+            pause_what  = (
+                f"Pause campaign every {dow} (00:00–23:59) and resume Monday 00:00 — "
+                f"{dow}s show {lw_ctr_pct}% CTR vs {avg_ctr}% average"
+            )
+            pause_why   = (
+                f"{dow}s recorded only {lw_ctr_pct}% CTR on ${round(lw['spend'], 2)} spend "
+                f"vs campaign avg {avg_ctr}% — every dollar spent on {dow}s returns "
+                f"less than {round(lw_ctr_pct / max(avg_ctr, 0.001), 1)}x the campaign average"
+            )
+        else:
+            pause_label = "Every Sunday"
+            pause_days  = ["Sunday"]
+            pause_hours = "00:00-23:59"
+            pause_what  = "Pause campaign every Sunday (00:00–23:59) and resume Monday 00:00 — weekends show lowest healthcare trial engagement"
+            pause_why   = "Healthcare trial audiences engage significantly less on Sundays — pausing prevents wasted impressions on low-intent days"
+
+        cost_items = [
+            {
+                "what":         budget_what,
+                "why":          budget_why,
+                "action_type":  "set_today_budget",
+                "action_value": budget_today,
+            },
+            {
+                "what":         pause_what,
+                "why":          pause_why,
+                "action_type":  "schedule_pause",
+                "action_value": {
+                    "pause_label": pause_label,
+                    "pause_days":  pause_days,
+                    "pause_hours": pause_hours,
+                },
+            },
+        ]
 
         # ── Content items ─────────────────────────────────────────────────────
-        if engagement in ("very_low", "below_avg"):
-            website_items = [
-                {
-                    "what": f"Rewrite page headline to immediately address '{audience}' pain point",
-                    "why":  f"CTR {ctr_benchmark} signals the headline is not stopping the scroll — primary weakness: {weakness}",
-                    "prompt": (
-                        f"Rewrite the headline for a '{goal}' landing page targeting '{audience}'. "
-                        f"Current headline: '{title}'. "
-                        f"CTR is {ctr_benchmark} — write 3 alternatives that lead with the core "
-                        f"benefit and create immediate relevance for the target audience. "
-                        f"Each headline must be under 10 words."
-                    ),
-                },
-                {
-                    "what": f"Add 6–8 targeted hashtags mixing broad healthcare + niche trial-specific tags",
-                    "why":  f"Current hashtags {hashtags} may not be reaching the full '{audience}' segment — discoverability gap",
-                    "prompt": (
-                        f"For a '{goal}' campaign targeting '{audience}', current hashtags: {hashtags}. "
-                        f"Suggest 8 high-engagement hashtags for Meta (mix: 3 broad healthcare, "
-                        f"3 niche trial/condition-specific, 2 campaign-branded). "
-                        f"Rank by expected reach and include a one-line rationale for each."
-                    ),
-                },
-                {
-                    "what": f"Shift primary CTA color to high-contrast accent — currently {colors or 'not set'}",
-                    "why":  f"Below-average CTR ({ctr_benchmark}) suggests the CTA button is not visually prominent enough",
-                    "prompt": (
-                        f"Current brand colors: {colors}. "
-                        f"Suggest a CTA button color (hex) that creates strong contrast against "
-                        f"the primary background color while remaining accessible (WCAG AA). "
-                        f"Also suggest revised surrounding copy to reinforce urgency for a '{goal}' campaign."
-                    ),
-                },
-                {
-                    "what": f"Rewrite caption to front-load the value proposition in the first sentence",
-                    "why":  f"CTR {ctr_benchmark} — users are not reading through to the CTA; front-loading value increases click intent",
-                    "prompt": (
-                        f"Rewrite this caption for a '{goal}' website targeting '{audience}': "
-                        f"'{caption[:200] or '(no caption set)'}'. "
-                        f"The new version must: (1) open with the strongest benefit, "
-                        f"(2) keep under 150 words, (3) end with '{cta}' as the call-to-action. "
-                        f"Return 2 variants."
-                    ),
-                },
-            ]
-            ad_items = [
-                {
-                    "what": "Rewrite ad headline to be benefit-first and under 40 characters",
-                    "why":  f"CTR {ctr_benchmark} is below industry average — headline must communicate the benefit in the first read",
-                    "prompt": (
-                        f"Rewrite the Meta ad headline for a '{goal}' campaign. "
-                        f"Current headline: '{title}'. Audience: '{audience}'. "
-                        f"Write 3 benefit-first alternatives, each under 40 characters, "
-                        f"avoiding medical jargon that may trigger ad policy flags."
-                    ),
-                },
-                {
-                    "what": "Shorten body copy to 2 sentences: problem → solution → CTA",
-                    "why":  f"Below-average CTR ({ctr_benchmark}) — long copy loses attention before the CTA; 2-sentence structure increases read-through",
-                    "prompt": (
-                        f"Condense this Meta ad caption to exactly 2 sentences for a '{goal}' ad: "
-                        f"'{caption[:200] or '(no caption set)'}'. "
-                        f"Sentence 1: relatable problem for '{audience}'. "
-                        f"Sentence 2: solution + CTA '{cta}'. "
-                        f"Return 2 variants."
-                    ),
-                },
-                {
-                    "what": "Use high-contrast image: warm tones, clear human focal point, minimal text overlay",
-                    "why":  f"Primary creative weakness is '{weakness}' — image composition is the fastest lever to improve scroll-stop rate",
-                    "prompt": (
-                        f"Describe the ideal image for a Meta ad with goal '{goal}', "
-                        f"targeting '{audience}'. "
-                        f"Specify: color temperature, main subject, background, "
-                        f"facial expression if applicable, text overlay (yes/no and style), "
-                        f"and overall emotional tone. Be specific enough for a designer or image AI."
-                    ),
-                },
-                {
-                    "what": f"Update CTA from '{cta}' to a more action-specific phrase with urgency",
-                    "why":  f"Generic CTAs underperform on Meta — specificity increases CTR; current level {ctr_benchmark}",
-                    "prompt": (
-                        f"Improve the CTA for a '{goal}' Meta ad currently using '{cta}'. "
-                        f"Audience: '{audience}'. "
-                        f"Suggest 3 more specific and urgent alternatives that comply with "
-                        f"healthcare advertising guidelines. Include a brief rationale for each."
-                    ),
-                },
-            ]
+        below_avg = engagement in ("very_low", "below_avg")
 
-        else:
-            # At or above average — focus on scaling and fatigue prevention
-            website_items = [
-                {
-                    "what": "A/B test 2 headline variants: urgency angle vs social-proof angle",
-                    "why":  f"CTR {ctr_benchmark} is solid — systematic A/B testing is the safest way to push performance further before scaling",
-                    "prompt": (
-                        f"Generate 2 A/B test headline variants for a '{goal}' landing page "
-                        f"targeting '{audience}'. Current headline: '{title}'. "
-                        f"Variant A: urgency/scarcity angle. "
-                        f"Variant B: social proof / outcome data angle. "
-                        f"Each under 10 words."
-                    ),
-                },
-                {
-                    "what": "Add 3–5 trending niche hashtags to sustain organic reach momentum",
-                    "why":  f"CTR {ctr_benchmark} is above average — expanding the hashtag strategy with niche tags can compound organic reach",
-                    "prompt": (
-                        f"Suggest 5 trending (2025–2026) niche hashtags for a '{goal}' campaign "
-                        f"targeting '{audience}' on Meta. "
-                        f"Current hashtags: {hashtags}. "
-                        f"Focus on engaged-community tags (10K–500K posts), not just high-volume."
-                    ),
-                },
-                {
-                    "what": "Introduce a seasonal color palette variation to prevent creative fatigue",
-                    "why":  f"Strong CTR ({ctr_benchmark}) is at risk of declining as ad frequency rises — a fresh palette maintains attention",
-                    "prompt": (
-                        f"Suggest a seasonal color palette variation for a campaign currently using "
-                        f"{colors or 'default colors'}. "
-                        f"The variation should feel fresh but maintain brand recognition. "
-                        f"Provide: primary (#hex), secondary (#hex), accent (#hex), "
-                        f"and a one-sentence rationale for the seasonal shift."
-                    ),
-                },
-                {
-                    "what": "Test a story-driven caption opening with a patient/participant perspective",
-                    "why":  f"Above-average CTR ({ctr_benchmark}) — narrative hooks can improve post-click conversion by building empathy",
-                    "prompt": (
-                        f"Write a story-driven caption variant for a '{goal}' website page "
-                        f"targeting '{audience}'. "
-                        f"Open from the perspective of someone in the '{audience}' segment, "
-                        f"transition to the trial/study opportunity, and end with '{cta}'. "
-                        f"Keep under 180 words. Return 2 variants."
-                    ),
-                },
-            ]
-            ad_items = [
-                {
-                    "what": "Test a social-proof headline variant citing participant numbers or study outcomes",
-                    "why":  f"CTR {ctr_benchmark} — strong engagement; social proof can convert existing attention into trust for higher click-through",
-                    "prompt": (
-                        f"Write a social-proof Meta ad headline for a '{goal}' campaign "
-                        f"targeting '{audience}'. Current headline: '{title}'. "
-                        f"The variant should cite a trust signal (participant count, study duration, "
-                        f"institutional affiliation). Under 40 characters. "
-                        f"Return 3 options compliant with healthcare ad policies."
-                    ),
-                },
-                {
-                    "what": "Test clinical vs lifestyle image style with Meta dynamic creative",
-                    "why":  f"CTR {ctr_benchmark} is above average — image style testing can find the highest-converting visual approach before scaling budget",
-                    "prompt": (
-                        f"Describe two contrasting image styles for a '{goal}' Meta ad targeting '{audience}'. "
-                        f"Style 1 — Clinical/professional: composition, lighting, subject, background. "
-                        f"Style 2 — Lifestyle/relatable: composition, lighting, subject, background. "
-                        f"For each, specify the emotional tone and expected audience response."
-                    ),
-                },
-                {
-                    "what": f"Add urgency element to CTA: change '{cta}' to a time-bounded phrase",
-                    "why":  f"Good CTR ({ctr_benchmark}) — adding urgency to the CTA can increase registration conversion without changing the creative",
-                    "prompt": (
-                        f"Rewrite the CTA for a '{goal}' Meta ad, adding an urgency or scarcity element. "
-                        f"Current CTA: '{cta}'. Audience: '{audience}'. "
-                        f"Provide 3 alternatives that are truthful and compliant with healthcare "
-                        f"advertising guidelines (no false urgency)."
-                    ),
-                },
-                {
-                    "what": "Create a campaign-branded hashtag for recall and community building",
-                    "why":  f"Strong CTR ({ctr_benchmark}) creates an opportunity to build brand recall with a consistent campaign hashtag that scales",
-                    "prompt": (
-                        f"Create a campaign-branded hashtag for a '{goal}' campaign "
-                        f"targeting '{audience}'. "
-                        f"The hashtag should be unique, memorable, and appropriate for Meta. "
-                        f"Suggest 3 options with: hashtag text, expected discoverability (niche/medium/broad), "
-                        f"and a one-line rationale."
-                    ),
-                },
-            ]
+        # Website — always: one caption suggestion + one content suggestion
+        new_caption = (
+            f"Are you or someone you know part of '{audience}'? "
+            f"{'Join' if not caption else caption[:60].rstrip('. ') + ' — find out if you qualify.'} "
+            f"{cta}."
+        )
+        website_items = [
+            {
+                "what":         f"Try this caption: \"{new_caption}\"",
+                "why":          f"CTR {ctr_benchmark} — front-loading audience relevance in the first sentence increases click intent",
+                "action_type":  "edit_caption",
+                "action_value": new_caption,
+            },
+            {
+                "what":         (
+                    "Add a 'Why this trial?' FAQ block near the top of the page to reduce bounce rate"
+                    if below_avg else
+                    "Add a social-proof block showing trial progress near the top of the page to reduce bounce rate"
+                ),
+                "why":          (
+                    f"Below-average CTR ({ctr_benchmark}) — answering common concerns early converts more visitors"
+                    if below_avg else
+                    f"Above-average CTR ({ctr_benchmark}) — social proof compounds existing engagement"
+                ),
+                "action_type":  "edit_content",
+                "action_value": (
+                    "Add a FAQ block answering 'Why join this trial?', 'What happens during the study?', and 'Who is eligible?' near the top of the page."
+                    if below_avg else
+                    "Add a social-proof block showing enrollment progress (e.g. X participants enrolled so far) and a quote from the research team near the top of the page."
+                ),
+            },
+        ]
+
+        # Bot — recommend the most empathetic voice for healthcare audiences
+        bot_items = [
+            {
+                "what":         (
+                    "Switch voice to Grace — warm, friendly tone better suited for healthcare trial outreach"
+                    if below_avg else
+                    "Switch voice to Rachel — calm, professional tone aligned with above-average engagement profile"
+                ),
+                "why":          f"CTR {ctr_benchmark} for '{audience}' — voice tone is the primary trust signal in outbound calls",
+                "action_type":  "switch_voice",
+                "action_value": "oWAxZDx7w5VEj9dCyTzz" if below_avg else "EXAVITQu4vr4xnSDxMaL",
+            },
+        ]
+
+        # Ad creative — caption suggestion + hashtag list + image regeneration
+        new_ad_caption = (
+            f"{'Struggling with' if below_avg else 'Living with'} {goal.replace('trial', '').strip()}? "
+            f"A new study may help. {cta}."
+        )
+        suggested_hashtags = (
+            ["#ClinicalTrial", f"#{goal.replace(' ', '')[:15]}", "#HealthResearch",
+             "#MedicalStudy", f"#{(audience or 'Healthcare').replace(' ', '')[:15]}"]
+        )
+        ad_items = [
+            {
+                "what":         f"Try this caption: \"{new_ad_caption}\"",
+                "why":          f"CTR {ctr_benchmark} — 2-sentence problem→solution structure improves read-through before the CTA",
+                "action_type":  "edit_ad_caption",
+                "action_value": new_ad_caption,
+            },
+            {
+                "what":         f"Use these hashtags: {' '.join(suggested_hashtags)}",
+                "why":          f"Current tags {hashtags or '(none)'} — {'broader reach needed' if below_avg else 'niche tags compound existing engagement'}",
+                "action_type":  "edit_ad_hashtags",
+                "action_value": suggested_hashtags,
+            },
+            {
+                "what":         (
+                    "Regenerate the ad image: warm tones, clear human focal point, minimal text overlay"
+                    if below_avg else
+                    "Regenerate the ad image: introduce a clinical/professional variant to A/B test against current creative"
+                ),
+                "why":          f"Primary creative weakness is '{weakness}' — image is the fastest scroll-stop lever",
+                "action_type":  "regenerate_creative",
+                "action_value": None,
+            },
+        ]
 
         # ── Assemble output ───────────────────────────────────────────────────
         increase_days = [w["date"] for w in top_w]
@@ -782,6 +722,7 @@ Rules:
                     for w in low_w
                 ],
             },
-            "website_optimization":      website_items,
+            "website_optimization":       website_items,
+            "bot_optimization":           bot_items,
             "advertisement_optimization": ad_items,
         }

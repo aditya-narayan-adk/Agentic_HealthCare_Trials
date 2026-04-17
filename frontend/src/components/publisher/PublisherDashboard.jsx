@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, analyticsAPI, platformConnectionsAPI } from "../../services/api";
+import { adsAPI, analyticsAPI, platformConnectionsAPI, surveyAPI } from "../../services/api";
 import {
   Send, Globe, Image, BarChart3, Sparkles, Copy,
   CheckCircle, Rocket, ChevronDown, ChevronUp, Zap, X, ImageOff,
@@ -21,7 +21,7 @@ import {
   CheckCircle2, Loader2, Mic, PhoneCall, PhoneOff, Volume2, Radio, MessageSquare,
   Link2, Link2Off, Settings, RefreshCw, ChevronDown as ChevDown, SlidersHorizontal,
   ToggleLeft, ToggleRight, Trash2, Pencil, TrendingUp, Target, Clock, Calendar,
-  Play, Pause, RotateCcw, ChevronRight, Info,
+  Play, Pause, ChevronRight, Info, Plus,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis,
@@ -679,7 +679,7 @@ function getDeployChecklist(ad) {
       done:     !!ad.bot_config?.elevenlabs_agent_id,
       detail:   ad.bot_config?.elevenlabs_agent_id
         ? `Agent ID: ${ad.bot_config.elevenlabs_agent_id}`
-        : "Not yet provisioned on ElevenLabs",
+        : "Not yet provisioned",
       note:     null,
       action:   !ad.bot_config?.elevenlabs_agent_id
         ? { type: "navigate", path: `/publisher/campaign/${ad.id}`, label: "Open Campaign Details" }
@@ -1218,14 +1218,14 @@ function VoicebotConfig({ ad }) {
           else if (msg.type === "ping") ws.send(JSON.stringify({ type: "pong", event_id: msg.ping_event?.event_id }));
         } catch {}
       };
-      ws.onerror = () => { stopCall(); setCallError("Connection failed — check your ElevenLabs API key and agent provisioning."); };
+      ws.onerror = () => { stopCall(); setCallError("Connection failed — check that the agent is provisioned and try again."); };
       ws.onclose = (evt) => {
         if (!closingRef.current) { cleanupCall(); setCallStatus("idle"); if (evt.code !== 1000) setCallError(`Session closed (code ${evt.code}).`); }
         closingRef.current = false;
       };
     } catch (err) {
       cleanupCall(); setCallStatus("idle");
-      if (err.message?.includes("No ElevenLabs agent provisioned")) {
+      if (err.message?.includes("No ElevenLabs agent provisioned") || err.message?.includes("No voice agent provisioned")) {
         setAgentStatus({ provisioned: false });
         setCallError("Agent is not provisioned — click Provision Agent to set it up.");
       } else {
@@ -1285,7 +1285,7 @@ function VoicebotConfig({ ad }) {
   };
 
   const handleDeleteAgent = async () => {
-    if (!window.confirm("Delete the ElevenLabs agent for this campaign?")) return;
+    if (!window.confirm("Delete the voice agent for this campaign?")) return;
     try {
       await adsAPI.deleteVoiceAgent(ad.id);
       setAgentStatus({ provisioned: false });
@@ -1315,7 +1315,7 @@ function VoicebotConfig({ ad }) {
       {/* Header */}
       <div className="flex items-center gap-2 mb-4">
         <Mic size={15} style={{ color: "var(--color-accent)" }} />
-        <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>ElevenLabs Voice Agent</span>
+        <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>Voice Agent</span>
         {agentStatus?.provisioned ? (
           <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#10b981", fontWeight: 600 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
@@ -1390,7 +1390,7 @@ function VoicebotConfig({ ad }) {
           />
         </div>
         <div>
-          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>ElevenLabs Voice</label>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Voice</label>
           <select value={form.voice_id} onChange={(e) => setForm((p) => ({ ...p, voice_id: e.target.value }))} className="field-select">
             {ELEVEN_VOICES.map((v) => (
               <option key={v.id} value={v.id}>{v.label}</option>
@@ -1483,7 +1483,7 @@ function VoicebotConfig({ ad }) {
               </p>
             )}
             <p style={{ marginTop: 5, fontSize: "0.68rem", color: "var(--color-muted)" }}>
-              The agent will call this number via ElevenLabs/Twilio.
+              The agent will call this number via our outbound calling service.
             </p>
           </div>
 
@@ -2586,6 +2586,8 @@ function aspectRatioForFormat(format = "") {
 }
 
 // ─── Manage Ads Tab ───────────────────────────────────────────────────────────
+const DAY_OPTIONS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
 function ManageTab({ ads, metaConnection }) {
   // Campaigns that have been distributed to Meta
   const metaCampaigns = ads.filter((a) => a.bot_config?.meta_campaign_id);
@@ -2597,6 +2599,11 @@ function ManageTab({ ads, metaConnection }) {
   const [editForm,      setEditForm]      = useState({});
   const [editSaving,    setEditSaving]    = useState(false);
   const [schedules,     setSchedules]     = useState({});   // { adId: { loading, data } }
+  const [pauseTarget,    setPauseTarget]    = useState(null); // adId whose pause modal is open
+  // windows: array of { id, days:[], timeFrom, timeTo }
+  const [pauseWindows,   setPauseWindows]   = useState([]);
+  const [pauseSaving,    setPauseSaving]    = useState(false);
+  const [savedSchedules, setSavedSchedules] = useState({}); // { adId: windows[] } — local cache after save
 
   const loadMetaAds = async (adId) => {
     setMetaAds((p) => ({ ...p, [adId]: { loading: true, ads: [], error: null } }));
@@ -2676,6 +2683,61 @@ function ManageTab({ ads, metaConnection }) {
     }
   };
 
+  // Returns array of window objects for an ad
+  const getWindowsForAd = (adId) => {
+    if (savedSchedules[adId] !== undefined) return savedSchedules[adId];
+    const ad = metaCampaigns.find((a) => a.id === adId);
+    const existing = ad?.bot_config?.pause_schedule;
+    if (!existing) return [];
+    // Handle legacy single-object format
+    if (Array.isArray(existing)) return existing;
+    // Convert old single format to array
+    return [{
+      id: "legacy",
+      days: existing.pause_days || [],
+      timeFrom: (existing.pause_hours || "00:00-23:59").split("-")[0],
+      timeTo:   (existing.pause_hours || "00:00-23:59").split("-")[1],
+    }];
+  };
+
+  const openPauseModal = (adId) => {
+    const existing = getWindowsForAd(adId);
+    setPauseWindows(existing.map((w, i) => ({ ...w, id: w.id || String(i) })));
+    setPauseTarget(adId);
+  };
+
+  const addWindow = () => {
+    const id = Date.now().toString();
+    setPauseWindows((p) => [...p, { id, days: [], timeFrom: "00:00", timeTo: "23:59" }]);
+  };
+
+  const removeWindow = (id) => {
+    setPauseWindows((p) => p.filter((w) => w.id !== id));
+  };
+
+  const updateWindow = (id, field, value) => {
+    setPauseWindows((p) => p.map((w) => w.id === id ? { ...w, [field]: value } : w));
+  };
+
+  const toggleWindowDay = (id, day) => {
+    setPauseWindows((p) => p.map((w) =>
+      w.id === id ? { ...w, days: w.days.includes(day) ? w.days.filter((d) => d !== day) : [...w.days, day] } : w
+    ));
+  };
+
+  const handlePauseSave = async () => {
+    if (!pauseTarget) return;
+    const invalid = pauseWindows.filter((w) => w.days.length === 0);
+    if (invalid.length > 0) { alert("Each window must have at least one day selected."); return; }
+    setPauseSaving(true);
+    try {
+      await adsAPI.updateBotConfig(pauseTarget, { pause_schedule: pauseWindows });
+      setSavedSchedules((p) => ({ ...p, [pauseTarget]: pauseWindows }));
+      setPauseTarget(null);
+    } catch (err) { alert(err.message); }
+    finally { setPauseSaving(false); }
+  };
+
   const inputStyle = {
     width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.83rem",
     border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
@@ -2722,7 +2784,7 @@ function ManageTab({ ads, metaConnection }) {
             subtitle={`Campaign ID: ${campaignId} · ${state?.ads?.length ?? "–"} ads`}
           >
             {/* Action bar */}
-            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
               <button
                 className="btn--inline-action--ghost"
                 onClick={() => loadMetaAds(ad.id)}
@@ -2743,6 +2805,13 @@ function ManageTab({ ads, metaConnection }) {
                   : <Clock size={12} />}
                 AI Schedule Suggestions
               </button>
+              <button
+                className="btn--inline-action--ghost"
+                onClick={() => openPauseModal(ad.id)}
+                style={{ borderColor: "#f59e0b44", color: "#f59e0b" }}
+              >
+                <Pause size={12} /> Schedule Pause
+              </button>
               <a
                 href={ad.bot_config?.meta_manager_url}
                 target="_blank"
@@ -2753,6 +2822,36 @@ function ManageTab({ ads, metaConnection }) {
                 <ExternalLink size={12} /> Ads Manager
               </a>
             </div>
+
+            {/* Active pause schedule windows */}
+            {(() => {
+              const windows = getWindowsForAd(ad.id);
+              if (!windows.length) return null;
+              return (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#b45309", display: "flex", alignItems: "center", gap: 5 }}>
+                      <Pause size={11} style={{ color: "#f59e0b" }} /> {windows.length} pause window{windows.length !== 1 ? "s" : ""} active
+                    </span>
+                    <button onClick={() => openPauseModal(ad.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b45309", fontSize: "0.72rem", fontWeight: 700, padding: 0 }}>Edit</button>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {windows.map((w, i) => (
+                      <div key={w.id || i} style={{
+                        padding: "6px 12px", borderRadius: 7,
+                        backgroundColor: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.22)",
+                        display: "flex", gap: 8, alignItems: "center",
+                      }}>
+                        <Clock size={10} style={{ color: "#f59e0b", flexShrink: 0 }} />
+                        <span style={{ fontSize: "0.75rem", color: "#92400e" }}>
+                          Every <strong>{w.days.join(", ")}</strong> · {w.timeFrom}–{w.timeTo}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Error */}
             {state?.error && (
@@ -2908,6 +3007,115 @@ function ManageTab({ ads, metaConnection }) {
         );
       })}
 
+      {/* Schedule Pause modal */}
+      {pauseTarget && (
+        <div className="ad-preview-overlay" onClick={() => setPauseTarget(null)}>
+          <div className="ad-preview-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="ad-preview-modal__header">
+              <div>
+                <h3 className="page-card__title">Schedule Pause Windows</h3>
+                <p className="page-card__subtitle">Add independent recurring windows — each pauses and resumes automatically</p>
+              </div>
+              <button className="btn--icon" onClick={() => setPauseTarget(null)}><X size={16} /></button>
+            </div>
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "14px", maxHeight: "70vh", overflowY: "auto" }}>
+              {pauseWindows.length === 0 && (
+                <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", textAlign: "center", padding: "16px 0" }}>
+                  No windows yet — click <strong>Add Window</strong> below to create one.
+                </p>
+              )}
+              {pauseWindows.map((win, idx) => (
+                <div key={win.id} style={{ border: "1px solid rgba(245,158,11,0.3)", borderRadius: 10, padding: "14px", backgroundColor: "rgba(245,158,11,0.04)", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* Window header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Window {idx + 1}
+                    </span>
+                    <button
+                      onClick={() => removeWindow(win.id)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 2, display: "flex", alignItems: "center" }}
+                      title="Remove this window"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {/* Day toggles */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {DAY_OPTIONS.map((day) => {
+                      const active = win.days.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          onClick={() => toggleWindowDay(win.id, day)}
+                          style={{
+                            fontSize: "0.72rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+                            cursor: "pointer", transition: "all 0.15s",
+                            backgroundColor: active ? "#f59e0b" : "rgba(245,158,11,0.08)",
+                            color: active ? "#fff" : "#b45309",
+                            border: `1px solid ${active ? "#f59e0b" : "rgba(245,158,11,0.3)"}`,
+                          }}
+                        >
+                          {day.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {/* Time range */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div>
+                      <label style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 4 }}>Pause from</label>
+                      <input
+                        type="time"
+                        style={{ ...inputStyle }}
+                        value={win.timeFrom}
+                        onChange={(e) => updateWindow(win.id, "timeFrom", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 4 }}>Resume at</label>
+                      <input
+                        type="time"
+                        style={{ ...inputStyle }}
+                        value={win.timeTo}
+                        onChange={(e) => updateWindow(win.id, "timeTo", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  {/* Per-window preview */}
+                  {win.days.length > 0 && (
+                    <div style={{ padding: "8px 12px", borderRadius: 7, backgroundColor: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.2)", display: "flex", gap: 7, alignItems: "center" }}>
+                      <Clock size={11} style={{ color: "#f59e0b", flexShrink: 0 }} />
+                      <p style={{ fontSize: "0.75rem", color: "#92400e", margin: 0 }}>
+                        Every <strong>{win.days.map((d) => d.slice(0, 3)).join(", ")}</strong> · {win.timeFrom} → {win.timeTo}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {/* Add window button */}
+              <button
+                onClick={addWindow}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px", borderRadius: 8, border: "1.5px dashed rgba(245,158,11,0.5)", background: "none", cursor: "pointer", color: "#b45309", fontSize: "0.8rem", fontWeight: 600 }}
+              >
+                <Plus size={14} /> Add Window
+              </button>
+            </div>
+            <div style={{ padding: "0 20px 20px", display: "flex", gap: "10px" }}>
+              <button
+                onClick={handlePauseSave}
+                disabled={pauseSaving}
+                className="btn--accent"
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+              >
+                {pauseSaving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Pause size={14} />}
+                {pauseSaving ? "Saving…" : "Save Schedule"}
+              </button>
+              <button onClick={() => setPauseTarget(null)} className="btn--ghost" style={{ flex: 1 }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit creative modal */}
       {editTarget && (
         <div className="ad-preview-overlay" onClick={() => setEditTarget(null)}>
@@ -2983,51 +3191,117 @@ function ManageTab({ ads, metaConnection }) {
 
 // ─── Optimizer Result ─────────────────────────────────────────────────────────
 
+const ACTION_META = {
+  set_today_budget:   { label: "Set Today's Budget",    color: "#22c55e", Icon: TrendingUp },
+  schedule_pause:     { label: "Schedule Pause",        color: "#f59e0b", Icon: Pause },
+  edit_caption:       { label: "Apply Caption",         color: "#6366f1", Icon: Globe },
+  edit_content:       { label: "Update Content",        color: "#6366f1", Icon: Globe },
+  switch_voice:       { label: "Switch Voice",          color: "#8b5cf6", Icon: Mic },
+  edit_ad_caption:    { label: "Apply Caption",         color: "#f59e0b", Icon: Image },
+  edit_ad_hashtags:   { label: "Apply Hashtags",        color: "#f59e0b", Icon: Image },
+  regenerate_creative:{ label: "Regenerate Creative",   color: "#f59e0b", Icon: Image },
+  informational:      { label: "Noted",                 color: "#6b7280", Icon: CheckCircle2 },
+};
+
+const ACTION_VIEW_PATH = {
+  set_today_budget:    "/publisher/manage",
+  schedule_pause:      "/publisher/manage",
+  edit_caption:        "/publisher/deploy",
+  edit_content:        "/publisher/deploy",
+  edit_ad_caption:     "/publisher/distribute",
+  edit_ad_hashtags:    "/publisher/distribute",
+  regenerate_creative: "/publisher/distribute",
+  switch_voice:        "/publisher",
+};
+
 /**
- * A single optimization card showing what/why + a Regenerate button.
- * onRegenerate(item, itemType) → Promise resolves to new item or null on error.
+ * Execute a single optimizer action against the API.
+ * Extracted so the auto-apply path (no UI) can call the same logic.
+ * Returns void; throws on failure.
  */
-function OptimizationItemCard({ item, itemType, adId, index, accentColor }) {
-  const [current, setCurrent]    = useState(item);
-  const [regenerating, setRegen] = useState(false);
-  const [copied, setCopied]      = useState(false);
-  const [marked, setMarked]      = useState(false);
+async function applyOptimizerAction(actionType, actionValue, adId) {
+  if (actionType === "set_today_budget") {
+    const newBudget = parseFloat(actionValue);
+    if (!isNaN(newBudget)) await adsAPI.updateMetaBudget(adId, newBudget);
 
-  const handleRegenerate = async () => {
-    setRegen(true);
+  } else if (actionType === "schedule_pause") {
+    const v = actionValue || {};
+    await adsAPI.updateBotConfig(adId, {
+      pause_schedule: {
+        label:       v.pause_label || "Low-CTR window",
+        pause_days:  v.pause_days  || [],
+        pause_hours: v.pause_hours || null,
+      },
+    });
+
+  } else if (actionType === "edit_caption") {
+    await adsAPI.minorEditStrategy(adId, { field: "caption",      new_value: actionValue || "", old_value: "" });
+
+  } else if (actionType === "edit_content") {
+    await adsAPI.minorEditStrategy(adId, { field: "content_note", new_value: actionValue || "", old_value: "" });
+    await adsAPI.generateWebsite(adId);
+
+  } else if (actionType === "switch_voice") {
+    await adsAPI.updateBotConfig(adId, { voice_id: actionValue });
+
+  } else if (actionType === "edit_ad_caption") {
+    await adsAPI.minorEditStrategy(adId, { field: "ad_caption",   new_value: actionValue || "", old_value: "" });
+
+  } else if (actionType === "edit_ad_hashtags") {
+    const tags = Array.isArray(actionValue)
+      ? actionValue
+      : (actionValue || "").split(/\s+/).filter(Boolean);
+    await adsAPI.minorEditStrategy(adId, { field: "hashtags", new_value: tags.join(" "), old_value: "" });
+
+  } else if (actionType === "regenerate_creative") {
+    await adsAPI.generateCreatives(adId);
+  }
+}
+
+function OptimizationItemCard({ item, globalIndex, adId, onApplied }) {
+  const navigate   = useNavigate();
+  const [applying, setApplying] = useState(false);
+  const [applied,  setApplied]  = useState(false);
+  const [error,    setError]    = useState(null);
+
+  const actionType = item.action_type || "informational";
+  const meta       = ACTION_META[actionType] || ACTION_META.informational;
+  const num        = String(globalIndex + 1).padStart(2, "0");
+  const viewPath   = ACTION_VIEW_PATH[actionType] || null;
+
+  const handleApply = async () => {
+    setApplying(true);
+    setError(null);
     try {
-      const fresh = await analyticsAPI.regenerateItem(adId, current.prompt, itemType);
-      if (fresh?.what) setCurrent(fresh);
-    } catch { /* keep old item on error */ }
-    finally { setRegen(false); }
+      await applyOptimizerAction(actionType, item.action_value, adId);
+      setApplied(true);
+      onApplied?.();
+    } catch (err) {
+      setError(err.message || "Failed to apply.");
+    } finally {
+      setApplying(false);
+    }
   };
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(current.prompt || current.what || "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const num = String(index + 1).padStart(2, "0");
 
   return (
     <div style={{
       borderRadius: 12,
-      border: "1px solid var(--color-card-border)",
-      borderLeft: `3px solid ${accentColor}`,
-      backgroundColor: marked ? `${accentColor}08` : "var(--color-card-bg)",
+      border: `1px solid ${applied ? meta.color + "40" : "var(--color-card-border)"}`,
+      borderLeft: `3px solid ${applied ? meta.color : "var(--color-card-border)"}`,
+      backgroundColor: applied ? `${meta.color}06` : "var(--color-card-bg)",
       overflow: "hidden",
-      transition: "background-color 0.2s",
+      transition: "all 0.2s",
+      opacity: applied ? 0.75 : 1,
     }}>
-      {/* What row */}
+      {/* Header row */}
       <div style={{ padding: "12px 14px 10px", display: "flex", gap: 10, alignItems: "flex-start" }}>
         <span style={{
           fontSize: "0.62rem", fontWeight: 800, color: "#fff",
-          background: accentColor, borderRadius: 5, padding: "2px 6px",
-          flexShrink: 0, marginTop: 3, letterSpacing: "0.02em",
+          background: applied ? meta.color : "var(--color-muted)", borderRadius: 5,
+          padding: "2px 6px", flexShrink: 0, marginTop: 3, letterSpacing: "0.02em",
         }}>{num}</span>
         <p style={{ fontSize: "0.86rem", fontWeight: 700, color: "var(--color-input-text)", lineHeight: 1.45, flex: 1 }}>
-          {current.what}
+          {item.what}
         </p>
       </div>
 
@@ -3039,235 +3313,255 @@ function OptimizationItemCard({ item, itemType, adId, index, accentColor }) {
       }}>
         <Target size={11} style={{ color: "var(--color-sidebar-text)", flexShrink: 0, marginTop: 3 }} />
         <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)", lineHeight: 1.55 }}>
-          {current.why}
+          {item.why}
         </p>
       </div>
 
-      {/* Footer actions */}
-      <div style={{ padding: "0 12px 10px", display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 5 }}>
-          <button
-            onClick={handleCopy}
-            style={{
-              display: "flex", alignItems: "center", gap: 4,
-              fontSize: "0.7rem", fontWeight: 600, padding: "4px 10px", borderRadius: 7,
-              cursor: "pointer", border: "1px solid var(--color-card-border)",
-              backgroundColor: "var(--color-page-bg)", color: "var(--color-sidebar-text)",
-            }}
-          >
-            {copied ? <CheckCircle2 size={10} style={{ color: "#22c55e" }} /> : <Copy size={10} />}
-            {copied ? "Copied!" : "Copy Prompt"}
-          </button>
-          <button
-            onClick={handleRegenerate}
-            disabled={regenerating}
-            style={{
-              display: "flex", alignItems: "center", gap: 4,
-              fontSize: "0.7rem", fontWeight: 600, padding: "4px 10px", borderRadius: 7,
-              cursor: "pointer", border: "1px solid var(--color-card-border)",
-              backgroundColor: "var(--color-page-bg)", color: "var(--color-accent)",
-              opacity: regenerating ? 0.6 : 1,
-            }}
-          >
-            {regenerating
-              ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
-              : <RotateCcw size={10} />}
-            {regenerating ? "Regenerating…" : "Regenerate"}
-          </button>
+      {/* Schedule preview — only for schedule_pause */}
+      {actionType === "schedule_pause" && item.action_value && (
+        <div style={{
+          margin: "0 12px 10px", padding: "8px 12px", borderRadius: 8,
+          backgroundColor: `${meta.color}08`, border: `1px solid ${meta.color}25`,
+          display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
+        }}>
+          <Clock size={11} style={{ color: meta.color, flexShrink: 0 }} />
+          <span style={{ fontSize: "0.72rem", fontWeight: 700, color: meta.color }}>
+            {item.action_value.pause_label}
+          </span>
+          {item.action_value.pause_hours && (
+            <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+              {item.action_value.pause_hours}
+            </span>
+          )}
+          <span style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", marginLeft: "auto" }}>
+            auto-pauses &amp; resumes on schedule
+          </span>
         </div>
-        <button
-          onClick={() => setMarked(m => !m)}
-          style={{
-            display: "flex", alignItems: "center", gap: 4,
-            fontSize: "0.7rem", fontWeight: 600, padding: "4px 10px", borderRadius: 7,
-            cursor: "pointer", transition: "all 0.15s",
-            border: `1px solid ${marked ? accentColor + "60" : "var(--color-card-border)"}`,
-            backgroundColor: marked ? accentColor + "18" : "transparent",
-            color: marked ? accentColor : "var(--color-sidebar-text)",
-          }}
-        >
-          {marked
-            ? <CheckCircle2 size={10} style={{ color: accentColor }} />
-            : <div style={{ width: 10, height: 10, borderRadius: 3, border: "1.5px solid currentColor" }} />}
-          {marked ? "Done" : "Mark done"}
-        </button>
+      )}
+
+      {/* Footer */}
+      <div style={{ padding: "0 12px 10px", display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+        {/* Action type badge */}
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          fontSize: "0.66rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+          backgroundColor: `${meta.color}14`, color: meta.color, border: `1px solid ${meta.color}30`,
+        }}>
+          <meta.Icon size={9} />
+          {meta.label}
+        </span>
+
+        {applied ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.72rem", fontWeight: 600, color: meta.color }}>
+              <CheckCircle2 size={12} /> Applied
+            </span>
+            {viewPath && (
+              <button
+                onClick={() => navigate(viewPath)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  fontSize: "0.72rem", fontWeight: 600, padding: "3px 10px", borderRadius: 7,
+                  cursor: "pointer", border: `1px solid ${meta.color}40`,
+                  backgroundColor: `${meta.color}0e`, color: meta.color,
+                  transition: "all 0.15s",
+                }}
+              >
+                <ExternalLink size={10} /> View Changes
+              </button>
+            )}
+          </span>
+        ) : (
+          <button
+            onClick={handleApply}
+            disabled={applying}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              fontSize: "0.75rem", fontWeight: 700, padding: "5px 14px", borderRadius: 8,
+              cursor: applying ? "not-allowed" : "pointer",
+              border: `1px solid ${meta.color}50`,
+              backgroundColor: `${meta.color}12`, color: meta.color,
+              opacity: applying ? 0.6 : 1, transition: "all 0.15s",
+            }}
+          >
+            {applying
+              ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
+              : <meta.Icon size={11} />}
+            {applying ? "Applying…" : "Apply"}
+          </button>
+        )}
       </div>
+
+      {error && (
+        <p style={{ padding: "0 14px 10px", fontSize: "0.72rem", color: "#ef4444", display: "flex", gap: 4, alignItems: "center" }}>
+          <AlertCircle size={11} /> {error}
+        </p>
+      )}
     </div>
   );
 }
 
 function OptimizerResult({ data, adId }) {
-  const [activeTab, setActiveTab] = useState("cost");
+  const [activeSection, setActiveSection] = useState(null);
 
   if (!data) return null;
 
-  // If the backend couldn't parse the AI response it wraps the raw text in
-  // { raw_response: "..." }.  Try to recover structured data from that string
-  // before falling back to showing raw text.
+  // Recover from raw_response fallback
   let resolved = data;
   if (data.raw_response && !data.cost_optimization && !data.website_optimization) {
     try {
       const raw = data.raw_response;
-      // Try direct parse, then extract the first {...} block
       let parsed;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        const start = raw.indexOf("{");
-        const end   = raw.lastIndexOf("}");
+      try { parsed = JSON.parse(raw); }
+      catch {
+        const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
         if (start !== -1 && end > start) parsed = JSON.parse(raw.slice(start, end + 1));
       }
-      if (parsed?.cost_optimization || parsed?.website_optimization || parsed?.advertisement_optimization) {
+      if (parsed?.cost_optimization || parsed?.website_optimization || parsed?.bot_optimization || parsed?.advertisement_optimization) {
         resolved = parsed;
       }
-    } catch { /* fall through to error state */ }
+    } catch { /* fall through */ }
   }
 
-  // Still no structured data — show a clean error rather than a raw JSON dump
-  if (!resolved.cost_optimization && !resolved.website_optimization && !resolved.advertisement_optimization) {
+  if (!resolved.cost_optimization && !resolved.website_optimization && !resolved.bot_optimization && !resolved.advertisement_optimization) {
     return (
       <div style={{ padding: "20px", textAlign: "center", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
         <AlertCircle size={24} style={{ color: "var(--color-muted)", margin: "0 auto 8px" }} />
         <p style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: 4 }}>Unable to parse optimizer response</p>
-        <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>Try re-running the optimizer. If this persists, Bedrock may be returning an unexpected format.</p>
+        <p style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>Try re-running the optimizer.</p>
       </div>
     );
   }
 
   const {
-    cost_optimization        = {},
-    website_optimization     = [],
+    cost_optimization          = {},
+    website_optimization       = [],
+    bot_optimization           = [],
     advertisement_optimization = [],
   } = resolved;
 
   const costItems  = cost_optimization.items || [];
   const costAssess = cost_optimization.overall_assessment;
-  const budgetDist = cost_optimization.budget_distribution;
-  const trafficWin = cost_optimization.traffic_windows || [];
 
-  const TABS = [
-    { id: "cost",    label: "Cost",        Icon: TrendingUp, accent: "#22c55e", count: costItems.length },
-    { id: "website", label: "Website",     Icon: Globe,      accent: "#6366f1", count: website_optimization.length },
-    { id: "ads",     label: "Ad Creative", Icon: Image,      accent: "#f59e0b", count: advertisement_optimization.length },
-  ];
+  const SECTIONS = [
+    {
+      key:    "cost",
+      label:  "Cost & Schedule",
+      icon:   TrendingUp,
+      accent: "#22c55e",
+      items:  costItems.map(i => ({ ...i, action_type: i.action_type || "set_today_budget" })),
+    },
+    {
+      key:    "website",
+      label:  "Website",
+      icon:   Globe,
+      accent: "#6366f1",
+      items:  website_optimization.map(i => ({ ...i, action_type: i.action_type || "edit_caption" })),
+    },
+    {
+      key:    "bot",
+      label:  "Voice Bot",
+      icon:   Mic,
+      accent: "#8b5cf6",
+      items:  bot_optimization.map(i => ({ ...i, action_type: i.action_type || "switch_voice" })),
+    },
+    {
+      key:    "ads",
+      label:  "Ad Creative",
+      icon:   Image,
+      accent: "#f59e0b",
+      items:  advertisement_optimization.map(i => ({ ...i, action_type: i.action_type || "edit_ad_caption" })),
+    },
+  ].filter(s => s.items.length > 0);
+
+  const totalItems = SECTIONS.reduce((n, s) => n + s.items.length, 0);
+  const openSection = SECTIONS.find(s => s.key === activeSection);
 
   return (
     <div>
-      {/* ── Tab strip ─────────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 3, backgroundColor: "var(--color-page-bg)", padding: 4, borderRadius: 10, marginBottom: 14 }}>
-        {TABS.map(({ id, label, Icon, accent, count }) => {
-          const active = activeTab === id;
-          return (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer",
-                backgroundColor: active ? "var(--color-card-bg)" : "transparent",
-                boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px var(--color-card-border)" : "none",
-                transition: "all 0.15s",
-              }}
-            >
-              <Icon size={12} style={{ color: active ? accent : "var(--color-sidebar-text)", transition: "color 0.15s" }} />
-              <span style={{ fontSize: "0.78rem", fontWeight: 600, color: active ? "var(--color-input-text)" : "var(--color-sidebar-text)", transition: "color 0.15s" }}>
-                {label}
-              </span>
-              <span style={{
-                fontSize: "0.64rem", fontWeight: 700, padding: "1px 6px", borderRadius: 999,
-                backgroundColor: active ? `${accent}20` : "rgba(107,114,128,0.1)",
-                color: active ? accent : "var(--color-muted)",
-                transition: "all 0.15s",
-              }}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Overall assessment banner */}
+      {costAssess && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, backgroundColor: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 16 }}>
+          <TrendingUp size={13} style={{ color: "#22c55e", flexShrink: 0, marginTop: 2 }} />
+          <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6 }}>{costAssess}</p>
+        </div>
+      )}
 
-      {/* ── Cost tab ──────────────────────────────────────────────────────── */}
-      {activeTab === "cost" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {costAssess && (
-            <div style={{ padding: "10px 14px", borderRadius: 10, backgroundColor: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <TrendingUp size={13} style={{ color: "#22c55e", flexShrink: 0, marginTop: 2 }} />
-              <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6 }}>{costAssess}</p>
-            </div>
-          )}
+      {totalItems === 0 && (
+        <p style={{ textAlign: "center", padding: "28px 0", color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>No suggestions generated for this period.</p>
+      )}
 
-          {budgetDist && (budgetDist.increase_days?.length > 0 || budgetDist.reduce_days?.length > 0) && (
-            <div style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)" }}>
-              <p style={{ fontSize: "0.67rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: 8 }}>Budget Reallocation</p>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                {budgetDist.increase_days?.map((d, i) => (
-                  <span key={i} style={{ fontSize: "0.71rem", fontWeight: 600, padding: "3px 10px", borderRadius: 999, backgroundColor: "rgba(34,197,94,0.08)", color: "#15803d", border: "1px solid rgba(34,197,94,0.2)" }}>↑ {d}</span>
-                ))}
-                {budgetDist.reduce_days?.map((d, i) => (
-                  <span key={i} style={{ fontSize: "0.71rem", fontWeight: 600, padding: "3px 10px", borderRadius: 999, backgroundColor: "rgba(239,68,68,0.08)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.2)" }}>↓ {d}</span>
-                ))}
-                {budgetDist.reallocation_pct && (
-                  <span style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)", marginLeft: 2 }}>— shift {budgetDist.reallocation_pct}</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {costItems.map((item, i) => (
-            <OptimizationItemCard key={i} item={item} itemType="cost" adId={adId} index={i} accentColor="#22c55e" />
-          ))}
-          {costItems.length === 0 && !costAssess && (
-            <p style={{ textAlign: "center", padding: "28px 0", color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>No cost actions generated for this period.</p>
-          )}
-
-          {trafficWin.length > 0 && (
-            <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid var(--color-card-border)", marginTop: 2 }}>
-              <div style={{ padding: "8px 14px", backgroundColor: "var(--color-card-bg)", borderBottom: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 6 }}>
-                <Clock size={12} style={{ color: "var(--color-sidebar-text)" }} />
-                <p style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>Traffic Windows</p>
-              </div>
-              {trafficWin.map((w, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, padding: "10px 14px", borderBottom: i < trafficWin.length - 1 ? "1px solid var(--color-card-border)" : "none", backgroundColor: "var(--color-page-bg)", alignItems: "flex-start" }}>
-                  <span style={{
-                    fontSize: "0.64rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", flexShrink: 0,
-                    backgroundColor: w.recommended_action === "increase" ? "rgba(34,197,94,0.1)" : w.recommended_action === "pause" ? "rgba(239,68,68,0.1)" : "rgba(234,179,8,0.1)",
-                    color: w.recommended_action === "increase" ? "#15803d" : w.recommended_action === "pause" ? "#dc2626" : "#92400e",
-                    border: `1px solid ${w.recommended_action === "increase" ? "rgba(34,197,94,0.2)" : w.recommended_action === "pause" ? "rgba(239,68,68,0.2)" : "rgba(234,179,8,0.25)"}`,
-                  }}>
-                    {w.recommended_action?.toUpperCase()}
-                  </span>
-                  <div>
-                    <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: 2 }}>{w.window}</p>
-                    <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>{w.reasoning}</p>
-                  </div>
+      {/* Category pill cards */}
+      {SECTIONS.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+          {SECTIONS.map((section) => {
+            const SIcon = section.icon;
+            const isActive = activeSection === section.key;
+            return (
+              <button
+                key={section.key}
+                onClick={() => setActiveSection(isActive ? null : section.key)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 16px", borderRadius: 10, cursor: "pointer",
+                  border: `1.5px solid ${isActive ? section.accent : `${section.accent}35`}`,
+                  backgroundColor: isActive ? `${section.accent}15` : `${section.accent}07`,
+                  transition: "all 0.15s",
+                  outline: "none",
+                  minWidth: 130,
+                }}
+              >
+                <div style={{
+                  width: 30, height: 30, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  backgroundColor: `${section.accent}20`,
+                }}>
+                  <SIcon size={14} style={{ color: section.accent }} />
                 </div>
-              ))}
-            </div>
-          )}
+                <div style={{ textAlign: "left" }}>
+                  <p style={{ fontSize: "0.78rem", fontWeight: 700, color: isActive ? section.accent : "var(--color-input-text)", margin: 0 }}>
+                    {section.label}
+                  </p>
+                  <p style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", margin: 0 }}>
+                    {section.items.length} suggestion{section.items.length !== 1 ? "s" : ""}
+                  </p>
+                </div>
+                <ChevronDown
+                  size={14}
+                  style={{
+                    color: section.accent, marginLeft: "auto",
+                    transform: isActive ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 0.2s",
+                  }}
+                />
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* ── Website tab ───────────────────────────────────────────────────── */}
-      {activeTab === "website" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {website_optimization.map((item, i) => (
-            <OptimizationItemCard key={i} item={item} itemType="website" adId={adId} index={i} accentColor="#6366f1" />
-          ))}
-          {website_optimization.length === 0 && (
-            <p style={{ textAlign: "center", padding: "28px 0", color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>No website suggestions generated.</p>
-          )}
-        </div>
-      )}
-
-      {/* ── Ad Creative tab ───────────────────────────────────────────────── */}
-      {activeTab === "ads" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {advertisement_optimization.map((item, i) => (
-            <OptimizationItemCard key={i} item={item} itemType="advertisement" adId={adId} index={i} accentColor="#f59e0b" />
-          ))}
-          {advertisement_optimization.length === 0 && (
-            <p style={{ textAlign: "center", padding: "28px 0", color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>No creative suggestions generated.</p>
-          )}
+      {/* Expanded section dropdown */}
+      {openSection && (
+        <div style={{
+          border: `1.5px solid ${openSection.accent}30`,
+          borderRadius: 12,
+          backgroundColor: `${openSection.accent}05`,
+          overflow: "hidden",
+          marginBottom: 4,
+        }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${openSection.accent}20`, display: "flex", alignItems: "center", gap: 8 }}>
+            <openSection.icon size={13} style={{ color: openSection.accent }} />
+            <p style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: openSection.accent, margin: 0 }}>
+              {openSection.label}
+            </p>
+            <span style={{ marginLeft: "auto", fontSize: "0.68rem", color: "var(--color-sidebar-text)" }}>
+              {openSection.items.length} suggestion{openSection.items.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {openSection.items.map((item, i) => (
+              <OptimizationItemCard key={i} item={item} globalIndex={i} adId={adId} />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -3288,6 +3582,8 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
   const [datePreset,    setDatePreset]    = useState("last_30d");
   const [insights,      setInsights]      = useState(null);   // { rows: [...] }
   const [syncing,       setSyncing]       = useState(false);
+  const [platformMetrics, setPlatformMetrics] = useState(null); // { conversations, surveys }
+  const [metricsLoading,  setMetricsLoading]  = useState(false);
 
   useEffect(() => {
     if (!optimizing) { setOptimizerStep(0); return; }
@@ -3299,6 +3595,18 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
 
   useEffect(() => {
     if (activeAd) setInsights(null);
+  }, [activeAd?.id]);
+
+  useEffect(() => {
+    if (!activeAd) return;
+    setMetricsLoading(true);
+    Promise.all([
+      adsAPI.listVoiceConversations(activeAd.id, 100).catch(() => ({ conversations: [] })),
+      surveyAPI.list(activeAd.id).catch(() => []),
+    ]).then(([convData, surveys]) => {
+      const convs = convData?.conversations || convData || [];
+      setPlatformMetrics({ conversations: convs, surveys: Array.isArray(surveys) ? surveys : [] });
+    }).finally(() => setMetricsLoading(false));
   }, [activeAd?.id]);
 
   const handleSyncInsights = async () => {
@@ -3398,12 +3706,21 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
     return undefined;
   };
 
-  const chartData = (insights?.rows || []).map((r) => ({
-    date:        r.date?.slice(5),   // "MM-DD"
-    Impressions: r.impressions || 0,
-    Clicks:      r.clicks      || 0,
-    Spend:       parseFloat((r.spend || 0).toFixed(2)),
-  }));
+  const chartData = (insights?.rows || []).map((r) => {
+    const imp = r.impressions || 0;
+    const clk = r.clicks      || 0;
+    return {
+      date:        r.date?.slice(5),   // "MM-DD"
+      Impressions: imp,
+      Clicks:      clk,
+      Spend:       parseFloat((r.spend || 0).toFixed(2)),
+      CTR:         imp > 0 ? parseFloat(((clk / imp) * 100).toFixed(3)) : 0,
+    };
+  });
+
+  // Parse CTR target from strategy KPIs (e.g. "2%" → 2.0)
+  const ctrKpi = strategyKpis.find(k => k.metric?.toLowerCase().includes("ctr") || k.metric?.toLowerCase().includes("click-through") || k.metric?.toLowerCase().includes("click rate"));
+  const ctrTarget = ctrKpi ? parseFloat(String(ctrKpi.target).replace(/[^0-9.]/g, "")) : null;
 
   const DATE_PRESETS = [
     { value: "last_7d",   label: "Last 7 days" },
@@ -3480,26 +3797,45 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
           ))}
         </div>
 
-        {/* Impressions + Clicks line chart */}
-        {chartData.length > 0 && (
-          <div style={{ marginBottom: "24px" }}>
-            <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)", marginBottom: "8px" }}>
-              Impressions &amp; Clicks — Daily
-            </p>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-card-border)" />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }} />
-                <YAxis yAxisId="left"  tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }} />
-                <Tooltip contentStyle={{ backgroundColor: "var(--color-card-bg)", border: "1px solid var(--color-card-border)", borderRadius: 8, fontSize: "0.78rem" }} />
-                <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
-                <Line yAxisId="left"  type="monotone" dataKey="Impressions" stroke="#6366f1" strokeWidth={2} dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="Clicks"      stroke="#22c55e" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+        {/* Impressions + Clicks line chart — right axis scaled to CTR target */}
+        {chartData.length > 0 && (() => {
+          const maxImpressions = Math.max(...chartData.map(d => d.Impressions), 1);
+          // If a CTR target exists, set right-axis max so that target-CTR clicks
+          // for the peak impression value aligns visually with the left-axis peak.
+          // e.g. 20000 impressions at 1% CTR → right max = 200, so 200 clicks sits
+          // at the same height as 20000 impressions.
+          const rightMax = (ctrTarget !== null && !isNaN(ctrTarget))
+            ? Math.ceil(maxImpressions * (ctrTarget / 100))
+            : undefined;
+          return (
+            <div style={{ marginBottom: "24px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "8px" }}>
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-sidebar-text)" }}>
+                  Impressions &amp; Clicks — Daily
+                </p>
+                {rightMax !== undefined && (
+                  <span style={{ fontSize: "0.65rem", fontWeight: 600, padding: "2px 8px", borderRadius: 999, backgroundColor: "rgba(99,102,241,0.08)", color: "#6366f1", border: "1px solid rgba(99,102,241,0.2)" }}>
+                    Right axis scaled to {ctrTarget}% CTR target
+                  </span>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-card-border)" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }} />
+                  <YAxis yAxisId="left"  tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }} domain={[0, maxImpressions]} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "var(--color-sidebar-text)" }}
+                    domain={rightMax !== undefined ? [0, rightMax] : [0, "auto"]} />
+                  <Tooltip contentStyle={{ backgroundColor: "var(--color-card-bg)", border: "1px solid var(--color-card-border)", borderRadius: 8, fontSize: "0.78rem" }} />
+                  <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+                  <Line yAxisId="left"  type="linear" dataKey="Impressions" stroke="#6366f1" strokeWidth={2} dot={false} />
+                  <Line yAxisId="right" type="linear" dataKey="Clicks"      stroke="#22c55e" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        })()}
+
 
         {/* Daily spend bar chart */}
         {chartData.length > 0 && (
@@ -3570,6 +3906,116 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
           </div>
         </SectionCard>
       )}
+
+      {/* Platform Metrics */}
+      {(() => {
+        const convs    = platformMetrics?.conversations || [];
+        const surveys  = platformMetrics?.surveys || [];
+
+        // Conversation metrics
+        const totalConvs   = convs.length;
+        const completedConvs = convs.filter(c => c.status === "done" || c.status === "completed" || c.end_time).length;
+        const convCompletionRate = totalConvs > 0 ? ((completedConvs / totalConvs) * 100).toFixed(1) + "%" : "–";
+        const avgDuration = totalConvs > 0
+          ? (() => {
+              const withDur = convs.filter(c => c.call_duration_secs > 0);
+              if (!withDur.length) return "–";
+              const avg = withDur.reduce((s, c) => s + c.call_duration_secs, 0) / withDur.length;
+              return avg >= 60 ? `${(avg / 60).toFixed(1)}m` : `${Math.round(avg)}s`;
+            })()
+          : "–";
+
+        // Survey / lead metrics
+        const totalSurveys  = surveys.length;
+        const qualifiedLeads = surveys.filter(s => s.screening_result === "qualified" || s.eligible === true).length;
+        const leadQualRate   = totalSurveys > 0 ? ((qualifiedLeads / totalSurveys) * 100).toFixed(1) + "%" : "–";
+
+        // Meta-derived chatbot conversion rate: (conversations / clicks) × 100
+        const chatbotConvRate = totalConvs > 0 && totals.clicks > 0
+          ? ((totalConvs / totals.clicks) * 100).toFixed(2) + "%"
+          : "–";
+
+        const metricCards = [
+          {
+            label: "Chatbot Conversations",
+            value: metricsLoading ? "…" : totalConvs.toLocaleString(),
+            sub: "Total voice/chat sessions started",
+            color: "#8b5cf6",
+            note: null,
+          },
+          {
+            label: "Conversation Completion Rate",
+            value: metricsLoading ? "…" : convCompletionRate,
+            sub: `${completedConvs} of ${totalConvs} completed`,
+            color: "#6366f1",
+            note: null,
+          },
+          {
+            label: "Avg. Conversation Duration",
+            value: metricsLoading ? "…" : avgDuration,
+            sub: "Mean time per session",
+            color: "#8b5cf6",
+            note: null,
+          },
+          {
+            label: "Chatbot Conversion Rate",
+            value: metricsLoading ? "…" : chatbotConvRate,
+            sub: "Conversations ÷ ad clicks",
+            color: "#6366f1",
+            note: !hasSynced ? "Sync Meta for clicks data" : null,
+          },
+          {
+            label: "Pre-Screener Submissions",
+            value: metricsLoading ? "…" : totalSurveys.toLocaleString(),
+            sub: "Survey responses received",
+            color: "#0ea5e9",
+            note: null,
+          },
+          {
+            label: "Lead Qualification Rate",
+            value: metricsLoading ? "…" : leadQualRate,
+            sub: `${qualifiedLeads} qualified of ${totalSurveys}`,
+            color: "#0ea5e9",
+            note: null,
+          },
+          {
+            label: "Website Visitors",
+            value: hasSynced ? totals.reach.toLocaleString() : "–",
+            sub: "Unique reach from Meta",
+            color: "#22c55e",
+            note: !hasSynced ? "Sync Meta to populate" : null,
+          },
+          {
+            label: "Cost Per Lead",
+            value: hasSynced && totals.conversions > 0 ? `$${(totals.spend / totals.conversions).toFixed(2)}` : "–",
+            sub: "Spend ÷ conversions",
+            color: "#f59e0b",
+            note: !hasSynced ? "Sync Meta to populate" : null,
+          },
+          {
+            label: "Total Ad Spend",
+            value: hasSynced ? `$${totals.spend.toFixed(2)}` : "–",
+            sub: "Across all Meta ads",
+            color: "#f59e0b",
+            note: !hasSynced ? "Sync Meta to populate" : null,
+          },
+        ];
+
+        return (
+          <SectionCard title="Platform Metrics" subtitle="Live data from chatbot, pre-screener, and Meta ads">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px" }}>
+              {metricCards.map((m, i) => (
+                <div key={i} style={{ padding: "14px 16px", borderRadius: "10px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", borderLeft: `3px solid ${m.color}30` }}>
+                  <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--color-sidebar-text)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{m.label}</p>
+                  <p style={{ fontSize: "1.3rem", fontWeight: 800, color: m.value === "–" ? "var(--color-muted)" : m.color, marginBottom: 4, lineHeight: 1 }}>{m.value}</p>
+                  <p style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)" }}>{m.sub}</p>
+                  {m.note && <p style={{ fontSize: "0.65rem", color: "var(--color-muted)", marginTop: 4, fontStyle: "italic" }}>{m.note}</p>}
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        );
+      })()}
 
       {/* Optimizer */}
       <SectionCard title="AI Optimizer" subtitle="Cost + content suggestions derived from your analytics data">

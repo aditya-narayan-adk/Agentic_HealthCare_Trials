@@ -133,6 +133,47 @@ async def list_advertisements(
     return result.scalars().all()
 
 
+@router.get("/optimizer-changes")
+async def list_optimizer_changes(
+    user: User = Depends(require_roles([UserRole.ETHICS_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all pending optimizer-change reviews grouped by advertisement."""
+    result = await db.execute(
+        select(Review)
+        .join(Advertisement, Review.advertisement_id == Advertisement.id)
+        .where(
+            Advertisement.company_id == user.company_id,
+            Review.review_type == "optimizer",
+            Review.status == "pending",
+        )
+        .order_by(Review.advertisement_id)
+    )
+    reviews = result.scalars().all()
+
+    ad_ids = list({r.advertisement_id for r in reviews})
+    ads_result = await db.execute(select(Advertisement).where(Advertisement.id.in_(ad_ids)))
+    ad_map = {a.id: a for a in ads_result.scalars().all()}
+
+    grouped = {}
+    for r in reviews:
+        ad = ad_map.get(r.advertisement_id)
+        if r.advertisement_id not in grouped:
+            grouped[r.advertisement_id] = {
+                "ad_id":    r.advertisement_id,
+                "ad_title": ad.title if ad else r.advertisement_id,
+                "changes":  [],
+            }
+        grouped[r.advertisement_id]["changes"].append({
+            "review_id":   r.id,
+            "comments":    r.comments,
+            "suggestions": r.suggestions or {},
+            "created_at":  r.created_at.isoformat() if hasattr(r, "created_at") and r.created_at else None,
+        })
+
+    return list(grouped.values())
+
+
 @router.get("/{ad_id}", response_model=AdvertisementOut)
 async def get_advertisement(
     ad_id: str,
@@ -155,7 +196,7 @@ async def get_advertisement(
 async def update_advertisement(
     ad_id: str,
     body: AdvertisementUpdate,
-    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -1077,7 +1118,7 @@ async def distribute_to_meta(
 async def generate_creatives(
     ad_id: str,
     background_tasks: BackgroundTasks,
-    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1100,6 +1141,19 @@ async def generate_creatives(
         )
 
     background_tasks.add_task(_bg_generate_creatives, ad_id, user.company_id)
+
+    # Queue optimizer-change review — auto-deploys to Meta when ethics manager approves.
+    if user.role == UserRole.PUBLISHER:
+        db.add(Review(
+            advertisement_id=ad_id,
+            reviewer_id=user.id,
+            review_type="optimizer",
+            status="pending",
+            comments="Optimizer regenerated ad creatives.",
+            suggestions={"action": "regenerate_creative"},
+        ))
+        await db.flush()
+
     return ad
 
 
@@ -1270,6 +1324,70 @@ async def update_meta_ad(
         await svc.close()
 
     return result
+
+
+@router.post("/{ad_id}/meta-budget")
+async def update_meta_budget(
+    ad_id: str,
+    body: dict,
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update the daily budget on the campaign's Meta ad set.
+    Body: {"daily_budget_usd": 2.50}
+    Also persists the new budget value to the local advertisement record.
+    """
+    from app.services.meta_ads_service import MetaAdsService
+    from app.models.models import PlatformConnection
+
+    daily_budget_usd = body.get("daily_budget_usd")
+    if daily_budget_usd is None:
+        raise HTTPException(status_code=422, detail="daily_budget_usd is required")
+    try:
+        daily_budget_usd = float(daily_budget_usd)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="daily_budget_usd must be a number")
+    if daily_budget_usd <= 0:
+        raise HTTPException(status_code=422, detail="daily_budget_usd must be positive")
+
+    ad_result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = ad_result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    conn_result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.company_id == user.company_id,
+            PlatformConnection.platform == "meta",
+        )
+    )
+    conn = conn_result.scalar_one_or_none()
+    _, _, access_token, ad_account_id, _ = _get_meta_conn_and_ids(ad, conn)
+
+    adset_id = (ad.bot_config or {}).get("meta_adset_id")
+    if not adset_id:
+        raise HTTPException(status_code=400, detail="No Meta ad set found for this campaign. Upload to Meta first.")
+
+    svc = MetaAdsService(access_token=access_token, ad_account_id=ad_account_id)
+    try:
+        result = await svc.update_adset_budget(adset_id, daily_budget_usd)
+    except Exception as exc:
+        logger.error("Meta update_adset_budget failed for adset %s: %s", adset_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=str(exc))
+    finally:
+        await svc.close()
+
+    # Persist locally so the UI reflects the new budget
+    ad.budget = daily_budget_usd
+    await db.flush()
+
+    return {"adset_id": adset_id, "daily_budget_usd": daily_budget_usd, "meta_result": result}
 
 
 @router.delete("/{ad_id}/meta-ads/{meta_ad_id}", status_code=204)
@@ -1635,7 +1753,7 @@ async def serve_website(
 async def generate_website(
     ad_id: str,
     background_tasks: BackgroundTasks,
-    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1658,6 +1776,19 @@ async def generate_website(
         )
 
     background_tasks.add_task(_bg_generate_website, ad_id, user.company_id)
+
+    # Queue optimizer-change review — auto-deploys (re-hosts website) when ethics manager approves.
+    if user.role == UserRole.PUBLISHER:
+        db.add(Review(
+            advertisement_id=ad_id,
+            reviewer_id=user.id,
+            review_type="optimizer",
+            status="pending",
+            comments="Optimizer regenerated website content.",
+            suggestions={"action": "regenerate_website"},
+        ))
+        await db.flush()
+
     return ad
 
 
@@ -1717,7 +1848,7 @@ async def host_page(
 async def minor_edit_strategy(
     ad_id: str,
     body: MinorEditRequest,
-    user: User = Depends(require_roles([UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
+    user: User = Depends(require_roles([UserRole.PUBLISHER, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1757,6 +1888,21 @@ async def minor_edit_strategy(
         comments=f"{body.field} changed from '{body.old_value[:120]}' to '{body.new_value[:120]}'",
     )
     db.add(audit)
+
+    # If a publisher changes creative/website fields via the optimizer,
+    # queue an optimizer-change review for the ethics dashboard.
+    # Campaign stays PUBLISHED; new content auto-deploys when ethics manager approves.
+    creative_fields = {"caption", "content_note", "ad_caption", "hashtags"}
+    if user.role == UserRole.PUBLISHER and body.field in creative_fields:
+        db.add(Review(
+            advertisement_id=ad_id,
+            reviewer_id=user.id,
+            review_type="optimizer",
+            status="pending",
+            comments=f"field:{body.field}",
+            suggestions={"field": body.field, "new_value": body.new_value, "old_value": body.old_value},
+        ))
+
     await db.flush()
     return ad
 
@@ -2096,3 +2242,161 @@ async def delete_voice_agent(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "deleted"}
+
+
+# ─── Optimizer Changes (Ethics Review) ───────────────────────────────────────
+
+
+
+@router.post("/{ad_id}/optimizer-changes/approve")
+async def approve_optimizer_changes(
+    ad_id: str,
+    body: dict,
+    user: User = Depends(require_roles([UserRole.ETHICS_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """
+    Approve a set of optimizer changes for a campaign.
+    Body: {"review_ids": ["id1", "id2", ...]}  — or omit to approve all pending.
+
+    For each approved review, auto-deploys the change:
+      - field update (caption/hashtags/etc) → already in strategy_json, no extra deploy needed
+      - regenerate_website → triggers re-host of the already-generated HTML
+      - regenerate_creative → triggers re-upload to Meta (if campaign is distributed)
+    Marks each review as "approved".
+    """
+    review_ids = body.get("review_ids") or []
+
+    ad_result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = ad_result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    # Load pending optimizer reviews
+    q = select(Review).where(
+        Review.advertisement_id == ad_id,
+        Review.review_type == "optimizer",
+        Review.status == "pending",
+    )
+    if review_ids:
+        q = q.where(Review.id.in_(review_ids))
+    reviews_result = await db.execute(q)
+    pending = reviews_result.scalars().all()
+
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending optimizer changes found")
+
+    deployed = []
+    for review in pending:
+        action = (review.suggestions or {}).get("action")
+        field  = (review.suggestions or {}).get("field")
+
+        if action == "regenerate_website":
+            # Re-host the already-generated website HTML
+            import shutil as _shutil
+            from app.core.config import settings as _settings
+            src = os.path.join(_settings.OUTPUT_DIR, user.company_id, ad_id, "website", "index.html")
+            if os.path.exists(src):
+                dest_dir = os.path.join(_settings.STATIC_DIR, "pages", ad_id)
+                os.makedirs(dest_dir, exist_ok=True)
+                _shutil.copy2(src, os.path.join(dest_dir, "index.html"))
+                ad.hosted_url = f"/static/pages/{ad_id}/index.html"
+                deployed.append("website re-hosted")
+            else:
+                deployed.append("website: no generated file found")
+
+        elif action == "regenerate_creative":
+            # Re-upload creatives to Meta for each existing Meta ad
+            bot = ad.bot_config or {}
+            campaign_id = bot.get("meta_campaign_id")
+            if campaign_id and ad.output_files:
+                from app.models.models import PlatformConnection
+                conn_result = await db.execute(
+                    select(PlatformConnection).where(
+                        PlatformConnection.company_id == user.company_id,
+                        PlatformConnection.platform == "meta",
+                    )
+                )
+                conn = conn_result.scalar_one_or_none()
+                if conn:
+                    background_tasks.add_task(
+                        _bg_generate_creatives, ad_id, user.company_id
+                    )
+                    deployed.append("creatives queued for regeneration")
+            else:
+                deployed.append("creatives: no Meta campaign or no output files")
+
+        elif field:
+            # Content field change is already staged in strategy_json — nothing more to deploy
+            deployed.append(f"field '{field}' already staged")
+
+        review.status = "approved"
+
+    await db.flush()
+    return {"approved": len(pending), "deployed": deployed}
+
+
+@router.post("/{ad_id}/optimizer-changes/reject")
+async def reject_optimizer_changes(
+    ad_id: str,
+    body: dict,
+    user: User = Depends(require_roles([UserRole.ETHICS_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reject a set of optimizer changes. Marks reviews as 'rejected' and reverts
+    the staged field back to old_value in strategy_json (if available).
+    Body: {"review_ids": ["id1", ...]}  — or omit to reject all pending.
+    """
+    review_ids = body.get("review_ids") or []
+
+    ad_result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = ad_result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    q = select(Review).where(
+        Review.advertisement_id == ad_id,
+        Review.review_type == "optimizer",
+        Review.status == "pending",
+    )
+    if review_ids:
+        q = q.where(Review.id.in_(review_ids))
+    reviews_result = await db.execute(q)
+    pending = reviews_result.scalars().all()
+
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending optimizer changes found")
+
+    strategy = dict(ad.strategy_json or {})
+    modified = False
+    for review in pending:
+        sugg = review.suggestions or {}
+        field     = sugg.get("field")
+        old_value = sugg.get("old_value")
+        if field and old_value is not None:
+            keys = field.split(".")
+            node = strategy
+            for key in keys[:-1]:
+                node = node.setdefault(key, {})
+            node[keys[-1]] = old_value
+            modified = True
+        review.status = "rejected"
+
+    if modified:
+        ad.strategy_json = strategy
+        flag_modified(ad, "strategy_json")
+
+    await db.flush()
+    return {"rejected": len(pending)}

@@ -19,7 +19,8 @@ import {
   Shield, FileText, AlertTriangle, CheckCircle2, RotateCcw,
   ChevronDown, ChevronUp, Megaphone, Users, MessageSquare,
   List, TrendingUp, Eye, Clock, CheckSquare, Square,
-  AlertCircle, Loader2, BookOpen, X, Plus,
+  AlertCircle, Loader2, BookOpen, X, Plus, Sparkles,
+  Globe, Image, Type, Hash, RefreshCw, ChevronRight,
 } from "lucide-react";
 
 // ─── Ethics checklist items (clinical-trial specific) ─────────────────────────
@@ -264,7 +265,7 @@ export default function EthicsDashboard() {
   const [docs,     setDocs]     = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [selected, setSelected] = useState(null);
-  const [tab,      setTab]      = useState("review"); // "review" | "documents" | "preview"
+  const [tab,      setTab]      = useState("review"); // "review" | "optimizations" | "documents" | "preview"
 
   // Right panel sub-tab
   const [panelTab, setPanelTab] = useState("strategy"); // "strategy" | "checklist" | "history"
@@ -279,9 +280,44 @@ export default function EthicsDashboard() {
   const [reviews,      setReviews]      = useState([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
 
+  // Optimizer changes tab
+  const [optChanges,      setOptChanges]      = useState([]);  // grouped by ad
+  const [optLoading,      setOptLoading]      = useState(false);
+  const [optActing,       setOptActing]       = useState({});  // { adId: "approving"|"rejecting" }
+
   // Documents tab
   const [docForm, setDocForm] = useState({ title: "", content: "" });
   const [savingDoc, setSavingDoc] = useState(false);
+
+  const loadOptChanges = useCallback(() => {
+    setOptLoading(true);
+    adsAPI.listOptimizerChanges()
+      .then(setOptChanges)
+      .catch(console.error)
+      .finally(() => setOptLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (tab === "optimizations") loadOptChanges();
+  }, [tab, loadOptChanges]);
+
+  const handleOptApprove = async (adId, reviewIds) => {
+    setOptActing((p) => ({ ...p, [adId]: "approving" }));
+    try {
+      await adsAPI.approveOptimizerChanges(adId, reviewIds);
+      loadOptChanges();
+    } catch (err) { alert(err.message); }
+    finally { setOptActing((p) => ({ ...p, [adId]: null })); }
+  };
+
+  const handleOptReject = async (adId, reviewIds) => {
+    setOptActing((p) => ({ ...p, [adId]: "rejecting" }));
+    try {
+      await adsAPI.rejectOptimizerChanges(adId, reviewIds);
+      loadOptChanges();
+    } catch (err) { alert(err.message); }
+    finally { setOptActing((p) => ({ ...p, [adId]: null })); }
+  };
 
   const loadData = useCallback(() => {
     setLoading(true);
@@ -366,15 +402,116 @@ export default function EthicsDashboard() {
       {/* Main tab bar */}
       <div className="flex gap-2 mb-6">
         {[
-          { key: "review",    label: "Ethics Review",      icon: Shield },
-          { key: "documents", label: "Ethical Guidelines", icon: BookOpen },
-          { key: "preview",   label: "Ad Preview",         icon: Eye },
-        ].map(({ key, label, icon: Icon }) => (
-          <button key={key} onClick={() => setTab(key)} className={tab === key ? "filter-tab--active" : "filter-tab"}>
+          { key: "review",        label: "Ethics Review",      icon: Shield },
+          { key: "optimizations", label: "Optimizations",      icon: Sparkles, badge: optChanges.reduce((s, g) => s + g.changes.length, 0) || null },
+          { key: "documents",     label: "Ethical Guidelines", icon: BookOpen },
+          { key: "preview",       label: "Ad Preview",         icon: Eye },
+        ].map(({ key, label, icon: Icon, badge }) => (
+          <button key={key} onClick={() => setTab(key)} className={tab === key ? "filter-tab--active" : "filter-tab"} style={{ position: "relative" }}>
             <Icon size={13} style={{ display: "inline", marginRight: 5 }} />{label}
+            {badge ? (
+              <span style={{ marginLeft: 6, fontSize: "0.62rem", fontWeight: 800, background: "#f59e0b", color: "#fff", borderRadius: 999, padding: "1px 6px" }}>{badge}</span>
+            ) : null}
           </button>
         ))}
       </div>
+
+      {/* ── Optimizations tab ────────────────────────────────────────────────── */}
+      {tab === "optimizations" && (
+        <div className="space-y-4">
+          {optLoading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+              <Loader2 size={24} style={{ animation: "spin 1s linear infinite", color: "var(--color-accent)" }} />
+            </div>
+          ) : optChanges.length === 0 ? (
+            <SectionCard title="Optimizer Changes" subtitle="Pending content changes from the AI optimizer">
+              <div className="empty-state" style={{ padding: "48px 16px" }}>
+                <Sparkles size={36} className="empty-state__icon" />
+                <p className="empty-state__text">No pending optimizer changes</p>
+                <p className="empty-state__hint">When the optimizer suggests content or creative changes, they'll appear here for your review before going live.</p>
+              </div>
+            </SectionCard>
+          ) : optChanges.map((group) => {
+            const acting = optActing[group.ad_id];
+            const allIds = group.changes.map((c) => c.review_id);
+            return (
+              <SectionCard
+                key={group.ad_id}
+                title={group.ad_title}
+                subtitle={`${group.changes.length} pending change${group.changes.length !== 1 ? "s" : ""} from AI optimizer`}
+              >
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                  {group.changes.map((change) => {
+                    const sugg = change.suggestions || {};
+                    const isField   = !!sugg.field;
+                    const isCreative = sugg.action === "regenerate_creative";
+                    const isWebsite  = sugg.action === "regenerate_website";
+                    const FIELD_ICON = { caption: Globe, content_note: Globe, ad_caption: Image, hashtags: Hash };
+                    const FieldIcon = FIELD_ICON[sugg.field] || Type;
+                    return (
+                      <div key={change.review_id} style={{
+                        borderRadius: 10, border: "1px solid var(--color-card-border)",
+                        borderLeft: "3px solid #f59e0b", backgroundColor: "rgba(245,158,11,0.03)",
+                        padding: "12px 14px",
+                      }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ fontSize: "0.65rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, backgroundColor: "rgba(245,158,11,0.12)", color: "#b45309", flexShrink: 0, marginTop: 2 }}>
+                            {isCreative ? "CREATIVE" : isWebsite ? "WEBSITE" : (sugg.field || "CHANGE").toUpperCase().replace("_", " ")}
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: "0.84rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: 4 }}>
+                              {change.comments}
+                            </p>
+                            {isField && sugg.new_value && (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                                {sugg.old_value && (
+                                  <div style={{ padding: "6px 10px", borderRadius: 6, backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                                    <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginBottom: 2, fontWeight: 600 }}>BEFORE</p>
+                                    <p style={{ fontSize: "0.8rem", color: "#b91c1c" }}>{sugg.old_value}</p>
+                                  </div>
+                                )}
+                                <div style={{ padding: "6px 10px", borderRadius: 6, backgroundColor: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                                  <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginBottom: 2, fontWeight: 600 }}>AFTER</p>
+                                  <p style={{ fontSize: "0.8rem", color: "#15803d" }}>{sugg.new_value}</p>
+                                </div>
+                              </div>
+                            )}
+                            {(isCreative || isWebsite) && (
+                              <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
+                                {isCreative ? "New creative images have been generated and will be uploaded to Meta on approval." : "New website HTML has been generated and will go live on approval."}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button
+                    onClick={() => handleOptApprove(group.ad_id, allIds)}
+                    disabled={!!acting}
+                    className="btn--accent"
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    {acting === "approving" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={13} />}
+                    {acting === "approving" ? "Approving…" : "Approve & Deploy All"}
+                  </button>
+                  <button
+                    onClick={() => handleOptReject(group.ad_id, allIds)}
+                    disabled={!!acting}
+                    className="btn--ghost"
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#ef4444", borderColor: "#ef444440" }}
+                  >
+                    {acting === "rejecting" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <X size={13} />}
+                    {acting === "rejecting" ? "Rejecting…" : "Reject All & Revert"}
+                  </button>
+                </div>
+              </SectionCard>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Ethics Review tab ─────────────────────────────────────────────────── */}
       {tab === "review" && (

@@ -2297,7 +2297,7 @@ function LiveVoiceWidget({ adId, isProvisioned }) {
 
       ws.onerror = () => {
         stop(); // stop() does NOT clear error, so we set it after
-        setError("Connection failed — check your ElevenLabs API key and that the agent is provisioned.");
+        setError("Connection failed — check that the agent is provisioned and try again.");
       };
       ws.onclose = (evt) => {
         if (!closingRef.current) {
@@ -2364,7 +2364,7 @@ function LiveVoiceWidget({ adId, isProvisioned }) {
               {isSpeaking ? "Agent is speaking…" : "Listening — speak into your microphone"}
             </p>
             <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: 2 }}>
-              Voice session active · audio flows directly to ElevenLabs
+              Voice session active · live audio streaming
             </p>
           </div>
         </div>
@@ -2657,8 +2657,8 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
       {/* ── Agent Provisioning (Publisher only) ───────────────────────────── */}
       {isPublisher && (
         <SectionCard
-          title="ElevenLabs Agent"
-          subtitle="Provision and manage the live conversational AI agent on ElevenLabs"
+          title="Voice Agent"
+          subtitle="Provision and manage the live conversational AI agent"
         >
           {statusLoading ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>
@@ -2700,7 +2700,7 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
           )}
           {!isProvisioned && !statusLoading && (
             <p style={{ marginTop: 10, fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>
-              Save the configuration above first, then click Provision to push it to ElevenLabs.
+              Save the configuration above first, then click Provision to deploy the agent.
             </p>
           )}
         </SectionCard>
@@ -2719,7 +2719,7 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
       {/* ── Conversation History ───────────────────────────────────────────── */}
       <SectionCard
         title="Conversation History"
-        subtitle="Past voice sessions recorded by ElevenLabs"
+        subtitle="Past voice sessions"
       >
         {convsLoading ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>

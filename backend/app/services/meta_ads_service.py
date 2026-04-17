@@ -425,6 +425,11 @@ class MetaAdsService:
             raise ValueError(f"Invalid ad status: {status!r}. Use ACTIVE or PAUSED.")
         return await self._post(meta_ad_id, {"status": status})
 
+    async def update_adset_budget(self, adset_id: str, daily_budget_usd: float) -> dict:
+        """Update the daily budget on an ad set. Meta expects the value in cents (integer)."""
+        daily_budget_cents = int(round(daily_budget_usd * 100))
+        return await self._post(adset_id, {"daily_budget": str(daily_budget_cents)})
+
     async def delete_ad(self, meta_ad_id: str) -> dict:
         """Permanently delete a Meta ad."""
         return await self._delete_req(meta_ad_id)
