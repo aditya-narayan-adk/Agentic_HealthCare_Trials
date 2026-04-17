@@ -14,6 +14,7 @@ Each suggestion item has:
 """
 
 import json
+import logging
 import re
 from typing import Dict, Any, List
 
@@ -21,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Advertisement, AdAnalytics, Review
 from app.core.bedrock import get_async_client, get_model, is_configured
+
+logger = logging.getLogger(__name__)
 
 
 class OptimizerService:
