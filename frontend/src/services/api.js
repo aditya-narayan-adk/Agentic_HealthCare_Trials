@@ -566,6 +566,29 @@ export const adsAPI = {
   deleteMetaAd: (adId, metaAdId) =>
     request(`/advertisements/${adId}/meta-ads/${metaAdId}`, { method: "DELETE" }),
 
+  // Optimizer changes (ethics review)
+  listOptimizerChanges: () =>
+    request("/advertisements/optimizer-changes"),
+
+  approveOptimizerChanges: (adId, reviewIds) =>
+    request(`/advertisements/${adId}/optimizer-changes/approve`, {
+      method: "POST",
+      body: JSON.stringify({ review_ids: reviewIds }),
+    }),
+
+  rejectOptimizerChanges: (adId, reviewIds) =>
+    request(`/advertisements/${adId}/optimizer-changes/reject`, {
+      method: "POST",
+      body: JSON.stringify({ review_ids: reviewIds }),
+    }),
+
+  // Update the daily budget on Meta ad set (pushes to Meta)
+  updateMetaBudget: (adId, dailyBudgetUsd) =>
+    request(`/advertisements/${adId}/meta-budget`, {
+      method: "POST",
+      body: JSON.stringify({ daily_budget_usd: dailyBudgetUsd }),
+    }),
+
   // Fetch insights from Meta and persist in AdAnalytics
   fetchMetaInsights: (adId, datePreset = "last_30d") =>
     request(`/advertisements/${adId}/meta-insights?date_preset=${datePreset}`),

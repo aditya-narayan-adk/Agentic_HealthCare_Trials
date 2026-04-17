@@ -3,6 +3,7 @@ Main Application Entry Point
 Registers all route modules and initializes the database.
 """
 
+import asyncio
 import os
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ from app.api.routes import auth, onboarding, users, advertisements, documents, a
 from app.api.routes import chat, survey_responses
 from app.api.routes import chat, platform_connections
 from app.core.config import settings
+from app.services.meta_scheduler import run_pause_scheduler
 
 
 async def _security_headers(request: Request, call_next):
@@ -47,8 +49,14 @@ async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "logos"), exist_ok=True)
     os.makedirs(os.path.join(settings.UPLOAD_DIR, "docs"), exist_ok=True)
     os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
+    scheduler_task = asyncio.create_task(run_pause_scheduler())
     yield
-    # Shutdown (cleanup if needed)
+    # Shutdown — cancel background scheduler gracefully
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(

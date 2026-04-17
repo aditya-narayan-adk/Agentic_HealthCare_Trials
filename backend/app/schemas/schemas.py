@@ -403,6 +403,7 @@ class BotConfigUpdate(BaseModel):
     language: Optional[str] = None
     allowed_origins: Optional[List[str]] = None   # restrict chat to these origins
     additional_params: Optional[Dict[str, Any]] = None
+    pause_schedule: Optional[Any] = None
 
 
 # ─── Reviewer Action Schemas ──────────────────────────────────────────────────
