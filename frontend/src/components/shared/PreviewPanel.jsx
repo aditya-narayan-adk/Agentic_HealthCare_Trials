@@ -290,8 +290,10 @@ export default function PreviewPanel({ ads }) {
         await adsAPI.generateWebsite(currentAd.id);
         setPreviewTab("website");
       }
-      // Poll until the background task commits a new updated_at
-      const fresh = await pollUntilUpdated(currentAd.id, beforeUpdatedAt);
+      // Poll until the background task commits a new updated_at.
+      // Website generation is slower (Claude + image gen + EFS write) so give it longer.
+      const timeoutMs = type === "website" ? 600_000 : 300_000;
+      const fresh = await pollUntilUpdated(currentAd.id, beforeUpdatedAt, timeoutMs);
       setCurrentAd(fresh);
     } catch (err) {
       setError(err.message);

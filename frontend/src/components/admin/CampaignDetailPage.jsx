@@ -3238,7 +3238,7 @@ function CampaignDetailPageInner() {
         genProgress.start("Building landing page…", 120000);
         try {
           const triggeredWebsite = await adsAPI.generateWebsite(id);
-          const afterWebsite = await pollUntilUpdated(id, triggeredWebsite.updated_at);
+          const afterWebsite = await pollUntilUpdated(id, triggeredWebsite.updated_at, 600_000);
           setAd(afterWebsite);
           genProgress.complete();
         } catch (err) {
@@ -3331,8 +3331,9 @@ function CampaignDetailPageInner() {
     try {
       const triggered = await adsAPI.generateWebsite(id);
       const prevUrl = triggered.output_url;
-      // Backend returns immediately; poll until the background task commits
-      const updated = await pollUntilUpdated(id, triggered.updated_at);
+      // Backend returns immediately; poll until the background task commits.
+      // Website gen is slower than creatives (Claude + image + EFS write) → 10 min.
+      const updated = await pollUntilUpdated(id, triggered.updated_at, 600_000);
       // Detect silent failure: task touched updated_at but didn't produce a URL
       if (!updated.output_url && !prevUrl) {
         throw new Error("Website generation failed on the server. Check the backend logs for the error.");
