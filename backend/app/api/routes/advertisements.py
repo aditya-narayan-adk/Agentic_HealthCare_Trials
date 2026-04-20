@@ -1324,7 +1324,7 @@ async def update_meta_ad(
                 image_hash=image_hash,
                 headline=body.get("headline", ""),
                 body=body.get("body", ""),
-                cta_type=(body.get("cta_type") or "LEARN_MORE").upper(),
+                cta_type=(body.get("cta_type") or "BOOK_NOW").upper(),
                 link_url=body.get("link_url", ""),
                 ad_name=ad.title,
             )

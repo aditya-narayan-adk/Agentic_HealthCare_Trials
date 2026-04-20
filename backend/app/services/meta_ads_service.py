@@ -567,8 +567,8 @@ class MetaAdsService:
             image_hash = await self.upload_image(disk_path)
             logger.info("STEP 3 OK: image_hash %s", image_hash)
 
-            cta_text = (creative.get("cta") or "Learn More").upper().strip()
-            cta_type = CTA_MAP.get(cta_text, "LEARN_MORE")
+            cta_text = (creative.get("cta") or "Book Now").upper().strip()
+            cta_type = CTA_MAP.get(cta_text, "BOOK_NOW")
 
             logger.info("STEP 4: Creating creative %d...", idx + 1)
             creative_id = await self.create_creative(

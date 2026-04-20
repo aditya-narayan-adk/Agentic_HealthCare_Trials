@@ -2638,7 +2638,7 @@ function ManageTab({ ads, metaConnection }) {
     setEditForm({
       headline:   ld.name || "",
       body:       ld.message || "",
-      cta_type:   ld.call_to_action?.type || "LEARN_MORE",
+      cta_type:   ld.call_to_action?.type || "BOOK_NOW",
       link_url:   ld.link || "",
       image_hash: metaAd.creative?.image_hash || "",
     });
@@ -3144,7 +3144,7 @@ function ManageTab({ ads, metaConnection }) {
                 <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 5 }}>CTA Type</label>
                 <select
                   style={inputStyle}
-                  value={editForm.cta_type || "LEARN_MORE"}
+                  value={editForm.cta_type || "BOOK_NOW"}
                   onChange={(e) => setEditForm((p) => ({ ...p, cta_type: e.target.value }))}
                 >
                   {["LEARN_MORE","SIGN_UP","CONTACT_US","GET_STARTED","APPLY_NOW","BOOK_NOW"].map((c) => (
@@ -3689,6 +3689,9 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
     if (m.includes("spend") || m.includes("amount spent"))
       return `$${totals.spend.toFixed(2)}`;
 
+    if (m.includes("conversion rate"))
+      return totals.clicks > 0 ? `${((totals.conversions / totals.clicks) * 100).toFixed(2)}%` : "–";
+
     if (m.includes("conversion") || m.includes("enrolled participant") || m.includes("total enrolled") || m.includes("enrolled"))
       return totals.conversions.toLocaleString();
 
@@ -3970,15 +3973,15 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
           },
           {
             label: "Website Visitors",
-            value: hasSynced ? totals.reach.toLocaleString() : "–",
-            sub: "Unique reach from Meta",
+            value: hasSynced ? totals.clicks.toLocaleString() : "–",
+            sub: "Ad clicks redirected to website",
             color: "#22c55e",
             note: !hasSynced ? "Sync Meta to populate" : null,
           },
           {
             label: "Cost Per Lead",
-            value: hasSynced && totals.conversions > 0 ? `$${(totals.spend / totals.conversions).toFixed(2)}` : "–",
-            sub: "Spend ÷ conversions",
+            value: hasSynced && totalSurveys > 0 ? `$${(totals.spend / totalSurveys).toFixed(2)}` : "–",
+            sub: "Spend ÷ pre-screener submissions",
             color: "#f59e0b",
             note: !hasSynced ? "Sync Meta to populate" : null,
           },
