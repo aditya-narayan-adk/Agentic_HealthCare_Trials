@@ -1753,22 +1753,18 @@ async def serve_protocol_document_file(
 async def serve_website(
     ad_id: str,
     download: bool = False,
-    user: User = Depends(_user_from_query_token_ads),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Serve the generated HTML landing page.
+    Serve the generated HTML landing page — public, no auth required.
+    The page contains no secrets or PII; it is safe to share as a Meta Ads redirect URL.
     ?download=true → Content-Disposition: attachment (triggers browser download).
-    Accessible via the existing /api proxy — no separate /outputs proxy needed.
     """
     from fastapi.responses import HTMLResponse, Response
     import os as _os
 
     result = await db.execute(
-        select(Advertisement).where(
-            Advertisement.id == ad_id,
-            Advertisement.company_id == user.company_id,
-        )
+        select(Advertisement).where(Advertisement.id == ad_id)
     )
     ad = result.scalar_one_or_none()
     if not ad:
