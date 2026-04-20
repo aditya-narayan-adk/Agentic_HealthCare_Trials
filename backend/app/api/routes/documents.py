@@ -9,8 +9,11 @@ Used by Study Coordinator (My Company) and Ethics Manager (Document Updation).
 
 import asyncio
 import os
+import re
 import mimetypes
 import logging
+import secrets
+import traceback
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -26,6 +29,20 @@ from app.services.storage import file_storage
 from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_filename(original: str | None) -> str:
+    """
+    Build a collision-free, URL-safe filename.
+    Strips directory components, replaces non-[A-Za-z0-9._-] chars with '_',
+    and prepends a short random token so concurrent uploads of the same name
+    never overwrite each other.
+    """
+    base = os.path.basename(original or "upload")
+    stem, ext = os.path.splitext(base)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "file"
+    ext  = re.sub(r"[^A-Za-z0-9.]+", "", ext).lower()
+    return f"{secrets.token_hex(4)}_{stem}{ext}"
 
 
 async def _background_train(company_id: str) -> None:
@@ -142,14 +159,32 @@ async def upload_document(
             detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
         )
 
-    file_path = await file_storage.save(
-        file=file,
-        subfolder=f"docs/{user.company_id}",
-        filename=file.filename,
-    )
+    safe_name = _safe_filename(file.filename)
+    try:
+        file_path = await file_storage.save(
+            file=file,
+            subfolder=f"docs/{user.company_id}",
+            filename=safe_name,
+        )
+    except Exception as exc:
+        logger.error(
+            "Document upload: file_storage.save failed (company=%s, filename=%s): %s\n%s",
+            user.company_id, file.filename, exc, traceback.format_exc(),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not save file to storage: {exc}",
+        )
 
     disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
-    content   = await asyncio.to_thread(extract_text, disk_path)
+    try:
+        content = await asyncio.to_thread(extract_text, disk_path)
+    except Exception as exc:
+        logger.warning(
+            "Document upload: extract_text failed for %s: %s — saving with empty content",
+            disk_path, exc,
+        )
+        content = None
 
     doc = CompanyDocument(
         company_id=user.company_id,
