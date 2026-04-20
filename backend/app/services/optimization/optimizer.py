@@ -254,7 +254,7 @@ class OptimizerService:
                 "title":    ad.title,
                 "caption":  _to_str(s.get("caption") or s.get("body"), ""),
                 "hashtags": s.get("hashtags", []) if isinstance(s.get("hashtags"), list) else [],
-                "cta":      _to_str(s.get("cta"), "Learn More"),
+                "cta":      _to_str(s.get("cta"), "Book Now"),
                 "colors":   s.get("brand_colors", []) if isinstance(s.get("brand_colors"), list) else [],
                 "font":     _to_str(s.get("font_style"), ""),
                 "audience": _to_str(s.get("target_audience"), ""),
@@ -569,7 +569,7 @@ Rules:
         title    = _to_str(cc.get("title"),    "this campaign")
         caption  = _to_str(cc.get("caption"),  "")
         hashtags = cc.get("hashtags", []) if isinstance(cc.get("hashtags"), list) else []
-        cta      = _to_str(cc.get("cta"),      "Learn More")
+        cta      = _to_str(cc.get("cta"),      "Book Now")
         colors   = cc.get("colors",   []) if isinstance(cc.get("colors"), list) else []
         font     = _to_str(cc.get("font"),     "not specified")
         audience = _to_str(cc.get("audience"), "general audience")

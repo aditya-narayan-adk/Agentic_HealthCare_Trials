@@ -2638,7 +2638,7 @@ function ManageTab({ ads, metaConnection }) {
     setEditForm({
       headline:   ld.name || "",
       body:       ld.message || "",
-      cta_type:   ld.call_to_action?.type || "LEARN_MORE",
+      cta_type:   ld.call_to_action?.type || "BOOK_NOW",
       link_url:   ld.link || "",
       image_hash: metaAd.creative?.image_hash || "",
     });
@@ -3144,7 +3144,7 @@ function ManageTab({ ads, metaConnection }) {
                 <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 5 }}>CTA Type</label>
                 <select
                   style={inputStyle}
-                  value={editForm.cta_type || "LEARN_MORE"}
+                  value={editForm.cta_type || "BOOK_NOW"}
                   onChange={(e) => setEditForm((p) => ({ ...p, cta_type: e.target.value }))}
                 >
                   {["LEARN_MORE","SIGN_UP","CONTACT_US","GET_STARTED","APPLY_NOW","BOOK_NOW"].map((c) => (
