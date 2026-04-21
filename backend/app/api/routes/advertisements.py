@@ -2053,18 +2053,19 @@ async def rewrite_strategy(
             detail=f"Strategy can only be rewritten from STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW, not '{ad.status.value}'",
         )
 
-    restore_status = ad.status  # remember where to return after rewrite
-    ad.status = AdStatus.OPTIMIZING
-    await db.flush()
+restore_status = ad.status  # remember where to return after rewrite
 
-    background_tasks.add_task(
-        _bg_rewrite_strategy,
-        ad_id,
-        user.company_id,
-        user.id,
-        body.instructions,
-        restore_status,
-    )
+ad.status = AdStatus.OPTIMIZING
+await db.flush()
+
+background_tasks.add_task(
+    _bg_rewrite_strategy,
+    ad_id,
+    user.company_id,
+    user.id,
+    body.instructions,
+    restore_status,
+)
     return ad
 
 
@@ -2267,6 +2268,34 @@ async def request_voice_call(
         raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
 
     return {"status": "calling", "to": phone, "detail": result}
+
+
+@router.post("/{ad_id}/sync-voice-transcripts")
+async def sync_voice_transcripts(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually pull all completed call transcripts from ElevenLabs for this campaign
+    and store them in the database, linked to participants by phone number.
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    svc = VoicebotAgentService(db)
+    try:
+        summary = await svc.sync_all_transcripts(ad_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs sync failed: {e}")
+    return summary
 
 
 @router.get("/{ad_id}/voice-session/token")

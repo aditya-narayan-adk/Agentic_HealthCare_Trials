@@ -357,9 +357,13 @@ class VoiceSession(Base):
     ended_at                    = Column(DateTime, nullable=True)
     duration_seconds            = Column(Integer, nullable=True)
     caller_metadata             = Column(JSON, nullable=True)            # browser, location, etc.
+    # Outbound call tracking — set when our system dials the participant
+    phone                       = Column(String(32), nullable=True)      # E.164 number we called
+    survey_response_id          = Column(String, ForeignKey("survey_responses.id"), nullable=True)
 
-    advertisement = relationship("Advertisement", back_populates="voice_sessions")
-    transcripts   = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
+    advertisement   = relationship("Advertisement", back_populates="voice_sessions")
+    transcripts     = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
+    survey_response = relationship("SurveyResponse", back_populates="voice_sessions", foreign_keys=[survey_response_id])
 
 
 # ─── Platform Connections ─────────────────────────────────────────────────────
@@ -449,4 +453,5 @@ class SurveyResponse(Base):
     is_eligible      = Column(Boolean, nullable=True)        # overall eligibility result
     created_at       = Column(DateTime, default=_now)
 
-    advertisement = relationship("Advertisement", back_populates="survey_responses")
+    advertisement  = relationship("Advertisement", back_populates="survey_responses")
+    voice_sessions = relationship("VoiceSession", back_populates="survey_response", foreign_keys="[VoiceSession.survey_response_id]")

@@ -772,4 +772,8 @@ export const surveyAPI = {
   // Get a single response with full details.
   get: (adId, responseId) =>
     request(`/advertisements/${adId}/survey-responses/${responseId}`),
+
+  // Pull completed call transcripts from ElevenLabs and store them (manual sync).
+  syncTranscripts: (adId) =>
+    request(`/advertisements/${adId}/sync-voice-transcripts`, { method: "POST" }),
 };

@@ -21,13 +21,21 @@ from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.models import Advertisement, SkillConfig, Company
+from app.models.models import Advertisement, SkillConfig, Company, VoiceSession, CallTranscript, SurveyResponse
 from app.core.bedrock import get_async_client, get_model, is_configured
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_BASE = "https://api.elevenlabs.io"
+
+
+def _normalise_phone(phone: str) -> str:
+    """Strip spaces/dashes/parens; keep leading +. Returns empty string if blank."""
+    if not phone:
+        return ""
+    import re
+    return re.sub(r"[\s\-().]+", "", phone)
 
 
 class VoicebotAgentService:
@@ -136,7 +144,8 @@ class VoicebotAgentService:
     async def outbound_call(self, advertisement_id: str, to_number: str) -> Dict[str, Any]:
         """
         Trigger an outbound phone call from ElevenLabs to the given number.
-        Automatically uses the first phone number configured in the ElevenLabs account.
+        Creates a VoiceSession record immediately so the post-call webhook can
+        find it by conversation_id and link the transcript to this participant.
         """
         ad = await self._get_advertisement(advertisement_id)
         bot_config: Dict[str, Any] = ad.bot_config or {}
@@ -161,7 +170,40 @@ class VoicebotAgentService:
             )
             if not resp.is_success:
                 raise ValueError(f"ElevenLabs outbound call failed ({resp.status_code}): {resp.text}")
-            return resp.json()
+            result = resp.json()
+
+        # Persist a VoiceSession so the post-call webhook can attach the transcript.
+        conversation_id = (
+            result.get("conversation_id")
+            or result.get("callSid")
+            or result.get("call_sid")
+        )
+        session = VoiceSession(
+            advertisement_id=advertisement_id,
+            elevenlabs_conversation_id=conversation_id,
+            phone=to_number,
+            status="active",
+            caller_metadata={"type": "outbound", "to": to_number},
+        )
+        self.db.add(session)
+
+        # Try to link immediately to an existing SurveyResponse with the same phone.
+        norm = _normalise_phone(to_number)
+        if norm:
+            sr_result = await self.db.execute(
+                select(SurveyResponse).where(
+                    SurveyResponse.advertisement_id == advertisement_id,
+                    SurveyResponse.phone == norm,
+                )
+            )
+            survey_resp = sr_result.scalars().first()
+            if survey_resp:
+                session.survey_response_id = survey_resp.id
+
+        await self.db.commit()
+        logger.info("Outbound call initiated to %s for ad %s, conversation_id=%s",
+                    to_number, advertisement_id, conversation_id)
+        return result
 
     async def get_signed_url(self, advertisement_id: str) -> str:
         """
@@ -254,6 +296,188 @@ class VoicebotAgentService:
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def sync_all_transcripts(self, advertisement_id: str) -> Dict[str, Any]:
+        """
+        Pull all completed conversations for this campaign from ElevenLabs,
+        store transcripts in CallTranscript, and link sessions to SurveyResponse
+        by phone number.  Called manually from the Participants tab.
+        Returns {"synced": N, "skipped": M}.
+        """
+        ad = await self._get_advertisement(advertisement_id)
+        bot_config: Dict[str, Any] = ad.bot_config or {}
+        agent_id = bot_config.get("elevenlabs_agent_id")
+        if not agent_id:
+            return {"synced": 0, "skipped": 0, "error": "No ElevenLabs agent provisioned"}
+
+        # Fetch conversation list from ElevenLabs (up to 100 most recent)
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{ELEVENLABS_BASE}/v1/convai/conversations",
+                headers=self._headers,
+                params={"agent_id": agent_id, "page_size": 100},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            conversations = resp.json().get("conversations", [])
+
+        synced = 0
+        skipped = 0
+        for conv in conversations:
+            conv_id = conv.get("conversation_id")
+            if not conv_id:
+                continue
+
+            # Skip if we already have transcripts for this session
+            existing = await self.db.execute(
+                select(VoiceSession).where(VoiceSession.elevenlabs_conversation_id == conv_id)
+            )
+            session = existing.scalar_one_or_none()
+            if session:
+                transcript_check = await self.db.execute(
+                    select(CallTranscript).where(CallTranscript.session_id == session.id).limit(1)
+                )
+                if transcript_check.scalar_one_or_none() is not None:
+                    skipped += 1
+                    continue
+
+            # Fetch full conversation detail
+            try:
+                async with httpx.AsyncClient() as client:
+                    detail_resp = await client.get(
+                        f"{ELEVENLABS_BASE}/v1/convai/conversations/{conv_id}",
+                        headers=self._headers,
+                        timeout=15.0,
+                    )
+                    detail_resp.raise_for_status()
+                    detail = detail_resp.json()
+            except Exception as exc:
+                logger.warning("Could not fetch conversation %s: %s", conv_id, exc)
+                skipped += 1
+                continue
+
+            transcript_turns = detail.get("transcript") or []
+            metadata = detail.get("metadata") or {}
+
+            # Extract phone number — outbound calls have phone_number_to
+            phone_call = metadata.get("phone_call") or {}
+            phone_to = (
+                phone_call.get("called_number")
+                or phone_call.get("to")
+                or metadata.get("phone_number_to")
+                or metadata.get("to_number")
+            )
+
+            duration = metadata.get("call_duration_secs") or metadata.get("duration_seconds")
+            try:
+                duration = int(duration) if duration is not None else None
+            except (TypeError, ValueError):
+                duration = None
+
+            status_raw = (detail.get("status") or conv.get("status") or "ended").lower()
+            call_status = "failed" if status_raw in ("failed", "error") else "ended"
+
+            # Ensure the VoiceSession is scoped to this advertisement
+            if session is None:
+                session = VoiceSession(
+                    advertisement_id=advertisement_id,
+                    elevenlabs_conversation_id=conv_id,
+                    phone=_normalise_phone(phone_to) if phone_to else None,
+                    status=call_status,
+                    caller_metadata={"type": "outbound", "source": "manual_sync"},
+                )
+                self.db.add(session)
+                await self.db.flush()
+
+            await self.store_transcript_from_webhook(
+                conversation_id=conv_id,
+                transcript_turns=transcript_turns,
+                phone_to=_normalise_phone(phone_to) if phone_to else None,
+                duration_seconds=duration,
+                status=call_status,
+            )
+            synced += 1
+
+        logger.info("Manual transcript sync for ad %s: synced=%d skipped=%d", advertisement_id, synced, skipped)
+        return {"synced": synced, "skipped": skipped}
+
+    async def store_transcript_from_webhook(
+        self,
+        conversation_id: str,
+        transcript_turns: list,
+        phone_to: Optional[str],
+        duration_seconds: Optional[int],
+        status: str = "ended",
+    ) -> VoiceSession:
+        """
+        Upsert a VoiceSession + CallTranscript rows from a webhook payload.
+        Matches the VoiceSession by elevenlabs_conversation_id.
+        Matches SurveyResponse by phone_to if no link exists yet.
+        Returns the VoiceSession.
+        """
+        from datetime import datetime, timezone as _tz
+
+        # Find existing session (created at call-start) or create one.
+        res = await self.db.execute(
+            select(VoiceSession).where(VoiceSession.elevenlabs_conversation_id == conversation_id)
+        )
+        session = res.scalar_one_or_none()
+
+        if session is None:
+            # Webhook arrived before or without our session record — create it now.
+            session = VoiceSession(
+                elevenlabs_conversation_id=conversation_id,
+                advertisement_id="",   # filled below if we can find the agent mapping
+                phone=phone_to,
+                status=status,
+                caller_metadata={"type": "outbound", "to": phone_to},
+            )
+            self.db.add(session)
+
+        session.status = status
+        session.ended_at = datetime.now(_tz.utc).replace(tzinfo=None)
+        if duration_seconds is not None:
+            session.duration_seconds = duration_seconds
+        if phone_to and not session.phone:
+            session.phone = phone_to
+
+        # Delete stale transcripts before re-inserting (idempotent).
+        from sqlalchemy import delete as _delete
+        await self.db.execute(
+            _delete(CallTranscript).where(CallTranscript.session_id == session.id)
+        )
+        await self.db.flush()   # make sure the delete is visible before inserts
+
+        for idx, turn in enumerate(transcript_turns):
+            role = turn.get("role", "").lower()
+            speaker = "agent" if role in ("agent", "assistant") else "user"
+            text = turn.get("message") or turn.get("text") or ""
+            ts = turn.get("time_in_call_secs")
+            ts_ms = int(ts * 1000) if ts is not None else None
+            self.db.add(CallTranscript(
+                session_id=session.id,
+                speaker=speaker,
+                text=text,
+                turn_index=idx,
+                timestamp_ms=ts_ms,
+            ))
+
+        # Link to SurveyResponse if not already linked.
+        if not session.survey_response_id and phone_to and session.advertisement_id:
+            norm = _normalise_phone(phone_to)
+            sr_res = await self.db.execute(
+                select(SurveyResponse).where(
+                    SurveyResponse.advertisement_id == session.advertisement_id,
+                    SurveyResponse.phone == norm,
+                )
+            )
+            sr = sr_res.scalars().first()
+            if sr:
+                session.survey_response_id = sr.id
+
+        await self.db.commit()
+        logger.info("Stored transcript for conversation %s (%d turns)", conversation_id, len(transcript_turns))
+        return session
 
     async def get_agent_status(self, advertisement_id: str) -> Dict[str, Any]:
         """
@@ -415,7 +639,7 @@ Respond with ONLY a valid JSON object, no markdown:
         language = bot_config.get("language", "en")
         agent_name = bot_config.get("bot_name", "Marketing Assistant")
 
-        return {
+        payload: Dict[str, Any] = {
             "name": agent_name,
             "conversation_config": {
                 "agent": {
@@ -433,6 +657,8 @@ Respond with ONLY a valid JSON object, no markdown:
                 },
             },
         }
+
+        return payload
 
     async def _build_system_prompt(self, ad: Advertisement) -> str:
         """

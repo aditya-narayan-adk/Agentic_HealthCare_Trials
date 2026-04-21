@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from app.db.database import init_db
 from app.api.routes import auth, onboarding, users, advertisements, documents, analytics, brand_kit, company
 from app.api.routes import chat, survey_responses
-from app.api.routes import chat, platform_connections
+from app.api.routes import platform_connections
 from app.core.config import settings
 from app.services.meta_scheduler import run_pause_scheduler
 
