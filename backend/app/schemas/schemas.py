@@ -438,6 +438,28 @@ class SurveyResponseCreate(BaseModel):
     answers:   List[SurveyAnswerItem] = []
     is_eligible: Optional[bool] = None
 
+class CallTranscriptOut(BaseModel):
+    speaker:      str
+    text:         str
+    turn_index:   Optional[int] = None
+    timestamp_ms: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class VoiceSessionOut(BaseModel):
+    id:                         str
+    elevenlabs_conversation_id: Optional[str] = None
+    status:                     str
+    phone:                      Optional[str] = None
+    started_at:                 datetime
+    ended_at:                   Optional[datetime] = None
+    duration_seconds:           Optional[int] = None
+    transcripts:                List[CallTranscriptOut] = []
+
+    class Config:
+        from_attributes = True
+
 class SurveyResponseOut(BaseModel):
     id:               str
     advertisement_id: str
@@ -448,6 +470,7 @@ class SurveyResponseOut(BaseModel):
     answers:          List[Dict[str, Any]]
     is_eligible:      Optional[bool] = None
     created_at:       datetime
+    voice_sessions:   List[VoiceSessionOut] = []
 
     class Config:
         from_attributes = True

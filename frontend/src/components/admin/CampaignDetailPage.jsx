@@ -31,7 +31,7 @@ import {
   MessageCircle, Send, ThumbsUp, ThumbsDown, RefreshCw, Sparkles,
   Download, Eye, Trash2, ClipboardList, Plus, X as XIcon, GripVertical,
   LayoutDashboard, ClipboardCheck, History, MapPin, Copy, PenLine,
-  Mic, PhoneCall, PhoneOff, Volume2, Wand2,
+  Mic, PhoneCall, PhoneOff, Volume2, Wand2, Phone,
 } from "lucide-react";
 
 // ─── Campaign categories that require a questionnaire ─────────────────────────
@@ -3149,6 +3149,8 @@ function CampaignDetailPageInner() {
   const [participants,     setParticipants]     = useState([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState(null);
+  const [syncingTranscripts,  setSyncingTranscripts]  = useState(false);
+  const [syncResult,          setSyncResult]          = useState(null);
 
   const genProgress = useGenerateProgress();
 
@@ -3217,6 +3219,26 @@ function CampaignDetailPageInner() {
       .catch(() => setParticipants([]))
       .finally(() => setParticipantsLoading(false));
   }, [pageTab, id]);
+
+  const handleSyncTranscripts = async () => {
+    setSyncingTranscripts(true);
+    setSyncResult(null);
+    try {
+      const result = await surveyAPI.syncTranscripts(id);
+      setSyncResult(result);
+      // Reload participants to pick up newly linked transcripts
+      const data = await surveyAPI.list(id);
+      setParticipants(data || []);
+      if (selectedParticipant) {
+        const refreshed = (data || []).find((p) => p.id === selectedParticipant.id);
+        if (refreshed) setSelectedParticipant(refreshed);
+      }
+    } catch (err) {
+      setSyncResult({ error: err.message || "Sync failed" });
+    } finally {
+      setSyncingTranscripts(false);
+    }
+  };
 
   // ── Action handlers ──────────────────────────────────────────────────────
   const handleGenerateStrategy = async () => {
@@ -4106,6 +4128,70 @@ function CampaignDetailPageInner() {
                 ))}
               </div>
 
+              {/* Voice call transcript */}
+              {selectedParticipant.voice_sessions?.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                    Voice Call Transcript
+                  </p>
+                  {selectedParticipant.voice_sessions.map((vs) => (
+                    <div key={vs.id} style={{ border: "1px solid var(--color-card-border)", borderRadius: 10, overflow: "hidden", marginBottom: 12 }}>
+                      {/* Session header */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: vs.transcripts?.length > 0 ? "1px solid var(--color-card-border)" : "none" }}>
+                        <Phone size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+                        <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                          {vs.phone || "Unknown number"}
+                        </span>
+                        <span style={{
+                          marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: 20,
+                          backgroundColor: vs.status === "ended" ? "rgba(34,197,94,0.12)" : vs.status === "failed" ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.12)",
+                          color: vs.status === "ended" ? "#16a34a" : vs.status === "failed" ? "#dc2626" : "#b45309",
+                        }}>
+                          {vs.status}
+                        </span>
+                        {vs.duration_seconds != null && (
+                          <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                            {Math.floor(vs.duration_seconds / 60)}m {vs.duration_seconds % 60}s
+                          </span>
+                        )}
+                        <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                          {new Date(vs.started_at).toLocaleString()}
+                        </span>
+                      </div>
+                      {/* Transcript turns */}
+                      {vs.transcripts?.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 360, overflowY: "auto", padding: "12px 16px" }}>
+                          {[...vs.transcripts].sort((a, b) => (a.turn_index ?? 0) - (b.turn_index ?? 0)).map((turn, ti) => (
+                            <div key={ti} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
+                              <span style={{
+                                flexShrink: 0, width: 44, fontSize: "0.68rem", fontWeight: 700, textAlign: "right",
+                                paddingTop: 3,
+                                color: turn.speaker === "agent" ? "var(--color-accent)" : "var(--color-sidebar-text)",
+                                textTransform: "uppercase",
+                              }}>
+                                {turn.speaker === "agent" ? "Agent" : "User"}
+                              </span>
+                              <div style={{
+                                flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: "0.83rem", lineHeight: 1.5,
+                                backgroundColor: turn.speaker === "agent" ? "rgba(var(--accent-rgb, 16,185,129), 0.07)" : "var(--color-page-bg)",
+                                border: "1px solid var(--color-card-border)",
+                                color: "var(--color-input-text)",
+                              }}>
+                                {turn.text}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", padding: "12px 16px" }}>
+                          No transcript available yet.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Survey answers */}
               {selectedParticipant.answers?.length > 0 && (
                 <>
@@ -4141,6 +4227,34 @@ function CampaignDetailPageInner() {
               title="Participants"
               subtitle="People who completed the survey and submitted their details"
             >
+              {/* Sync transcripts button — only relevant for voicebot campaigns */}
+              {ad.ad_type?.includes("voicebot") && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                  <button
+                    onClick={handleSyncTranscripts}
+                    disabled={syncingTranscripts}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "7px 14px", borderRadius: 8, border: "1px solid var(--color-card-border)",
+                      backgroundColor: "var(--color-card-bg)", cursor: syncingTranscripts ? "not-allowed" : "pointer",
+                      fontSize: "0.8rem", fontWeight: 600, color: "var(--color-input-text)",
+                      opacity: syncingTranscripts ? 0.6 : 1, transition: "opacity 0.15s",
+                    }}
+                  >
+                    {syncingTranscripts
+                      ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Syncing…</>
+                      : <><RefreshCw size={13} /> Sync Transcripts</>}
+                  </button>
+                  {syncResult && !syncResult.error && (
+                    <span style={{ fontSize: "0.78rem", color: "#16a34a" }}>
+                      ✓ {syncResult.synced} synced, {syncResult.skipped} already up-to-date
+                    </span>
+                  )}
+                  {syncResult?.error && (
+                    <span style={{ fontSize: "0.78rem", color: "#dc2626" }}>{syncResult.error}</span>
+                  )}
+                </div>
+              )}
               {participantsLoading ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "32px 0", justifyContent: "center" }}>
                   <Loader2 size={18} style={{ animation: "spin 1s linear infinite", color: "var(--color-accent)" }} />
@@ -4157,8 +4271,8 @@ function CampaignDetailPageInner() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 0, borderRadius: 10, border: "1px solid var(--color-card-border)", overflow: "hidden" }}>
                   {/* Table header */}
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 40px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
-                    {["Name", "Age", "Sex", "Phone", "Eligibility", ""].map((h) => (
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
+                    {["Name", "Age", "Sex", "Phone", "Eligibility", "", ""].map((h) => (
                       <span key={h} style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
                     ))}
                   </div>
@@ -4168,7 +4282,7 @@ function CampaignDetailPageInner() {
                       key={p.id}
                       onClick={() => setSelectedParticipant(p)}
                       style={{
-                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 40px",
+                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px",
                         gap: 0, padding: "12px 16px", cursor: "pointer",
                         borderBottom: idx < participants.length - 1 ? "1px solid var(--color-card-border)" : "none",
                         backgroundColor: "var(--color-card-bg)",
@@ -4190,6 +4304,12 @@ function CampaignDetailPageInner() {
                         {p.is_eligible === false && <AlertCircle size={12} />}
                         {p.is_eligible === true ? "Eligible" : p.is_eligible === false ? "Not Eligible" : "Unknown"}
                       </span>
+                      {/* Voice call indicator */}
+                      {p.voice_sessions?.length > 0 ? (
+                        <Phone size={13} style={{ color: "var(--color-accent)", alignSelf: "center" }} title="Has voice call transcript" />
+                      ) : (
+                        <span />
+                      )}
                       <ChevronDown size={14} style={{ color: "var(--color-sidebar-text)", transform: "rotate(-90deg)" }} />
                     </div>
                   ))}

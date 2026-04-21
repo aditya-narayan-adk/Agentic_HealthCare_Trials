@@ -123,6 +123,9 @@ async def init_db():
                 "ALTER TABLE optimizer_logs ADD COLUMN context JSON;",
                 "ALTER TABLE optimizer_logs ADD COLUMN human_decision VARCHAR(32);",
                 "ALTER TABLE optimizer_logs ADD COLUMN applied_changes JSON;",
+                # Voice session outbound call tracking
+                "ALTER TABLE voice_sessions ADD COLUMN phone VARCHAR(32);",
+                "ALTER TABLE voice_sessions ADD COLUMN survey_response_id VARCHAR;",
             ]
             for stmt in _sqlite_cols:
                 try:
@@ -197,6 +200,10 @@ async def init_db():
             "ALTER TABLE optimizer_logs ADD COLUMN IF NOT EXISTS human_decision VARCHAR(32);")
         await _add_column_if_missing(conn,
             "ALTER TABLE optimizer_logs ADD COLUMN IF NOT EXISTS applied_changes JSON;")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS phone VARCHAR(32);")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS survey_response_id VARCHAR;")
 
         # chat_sessions.campaign_id — added after initial table creation.
         await _run_migration(conn,
