@@ -1966,10 +1966,9 @@ async def _bg_rewrite_strategy(
     restore_status: AdStatus,
 ) -> None:
     """
-    Background task: rewrite strategy with Curator, then immediately run the
-    Reviewer pre-analysis (same as submit-for-review) so the campaign lands in
-    UNDER_REVIEW without requiring the Study Coordinator to re-submit manually.
-    On failure, restores original status so the campaign is not stuck in OPTIMIZING.
+    Background task: rewrite strategy with Curator, then restore the campaign to
+    exactly the status it had before the rewrite so no role hand-off is needed.
+    On failure, also restores original status so the campaign is not stuck in OPTIMIZING.
     """
     from app.db.database import async_session_factory
     try:
@@ -2008,25 +2007,10 @@ async def _bg_rewrite_strategy(
                 comments=f"AI Re-Strategy completed: '{preview}'",
             ))
 
-            # Step 2: immediately run Reviewer pre-analysis so the PM does not
-            # need to hand back to the Study Coordinator for re-submission.
-            # This mirrors what _bg_submit_for_review does.
-            try:
-                reviewer_svc = ReviewerService(db, company_id)
-                review_output = await reviewer_svc.pre_review(ad)
-                ad.website_reqs = review_output.get("website_requirements")
-                ad.ad_details   = review_output.get("ad_details")
-                flag_modified(ad, "website_reqs")
-                flag_modified(ad, "ad_details")
-                ad.status = AdStatus.UNDER_REVIEW
-            except Exception as review_err:
-                # Reviewer failed — still save the new strategy and fall back to
-                # STRATEGY_CREATED so the SC can re-submit manually if needed.
-                logger.error(
-                    "Post-rewrite reviewer pre-analysis failed for ad %s: %s",
-                    ad_id, review_err, exc_info=True,
-                )
-                ad.status = AdStatus.STRATEGY_CREATED
+            # Restore campaign to exactly the state it was in before the rewrite
+            # (STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW). This keeps the
+            # campaign in the same role's queue without any extra hand-offs.
+            ad.status = restore_status
 
             await db.commit()
     except Exception as e:
