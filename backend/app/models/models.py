@@ -365,7 +365,7 @@ class VoiceSession(Base):
     advertisement   = relationship("Advertisement", back_populates="voice_sessions")
     transcripts     = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
     survey_response = relationship("SurveyResponse", back_populates="voice_sessions", foreign_keys=[survey_response_id])
-    booking         = relationship("BookingAppointment", back_populates="voice_session", uselist=False)
+    booking         = relationship("Appointment", back_populates="voice_session", uselist=False)
 
 
 # ─── Platform Connections ─────────────────────────────────────────────────────
@@ -468,6 +468,7 @@ class Appointment(Base):
     id                 = Column(String, primary_key=True, default=_uuid)
     advertisement_id   = Column(String, ForeignKey("advertisements.id"), nullable=False)
     survey_response_id = Column(String, ForeignKey("survey_responses.id"), nullable=True)
+    voice_session_id   = Column(String, ForeignKey("voice_sessions.id"), nullable=True)
     patient_name       = Column(String(256), nullable=False)
     patient_phone      = Column(String(32), nullable=False)
     slot_datetime      = Column(DateTime, nullable=False)   # naive UTC
@@ -478,3 +479,4 @@ class Appointment(Base):
 
     advertisement   = relationship("Advertisement", back_populates="appointments")
     survey_response = relationship("SurveyResponse", back_populates="appointments")
+    voice_session   = relationship("VoiceSession", back_populates="booking")
