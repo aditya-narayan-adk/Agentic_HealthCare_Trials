@@ -23,7 +23,7 @@
 import React, { useState, useEffect, useCallback, useRef, Component } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { PageWithSidebar, SectionCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, companyAPI, surveyAPI } from "../../services/api";
+import { adsAPI, companyAPI, surveyAPI, appointmentsAPI } from "../../services/api";
 import {
   ArrowLeft, Megaphone, Globe, Image, Bot, MessageSquare,
   FileText, Check, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -1088,21 +1088,23 @@ function BudgetDonut({ strategy }) {
     color: DONUT_PALETTE[i % DONUT_PALETTE.length],
   }));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      <div style={{ position: "relative", flexShrink: 0 }}>
-        <DonutChart slices={slices} />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+      <div style={{ position: "relative" }}>
+        <DonutChart slices={slices} size={150} />
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <DollarSign size={15} style={{ color: "var(--color-accent)" }} />
         </div>
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
         {slices.map((s) => (
-          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0 }} />
-            <p style={{ flex: 1, fontSize: "0.76rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {s.label.replace(/_/g, " ")}
-            </p>
-            <p style={{ fontSize: "0.82rem", fontWeight: 800, color: s.color, flexShrink: 0, margin: 0 }}>{s.pct}%</p>
+          <div key={s.label} style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0, marginTop: 3 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: "0.74rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, lineHeight: 1.4 }}>
+                {s.label.replace(/_/g, " ")}
+              </p>
+              <p style={{ fontSize: "0.78rem", fontWeight: 800, color: s.color, margin: 0 }}>{s.pct}%</p>
+            </div>
           </div>
         ))}
       </div>
@@ -1405,7 +1407,8 @@ function StrategyViewer({ strategy, ad, onRetry }) {
           <SBar label="Overview" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, alignItems: "start" }}>
 
-            {/* Executive Summary */}
+            {/* Left: Executive Summary + Messaging stacked */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {executive_summary && (
               <SCard>
                 <SCardHead icon={<Sparkles size={13} />} label="Executive Summary" />
@@ -1441,7 +1444,82 @@ function StrategyViewer({ strategy, ad, onRetry }) {
               </SCard>
             )}
 
-            {/* Right: Audience + Messaging stacked */}
+              {messaging && (
+                <SCard>
+                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+
+                    {/* Core message — prominent quote block */}
+                    {messaging.core_message && (
+                      <div style={{ padding: "16px 18px" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
+                        <div style={{
+                          padding: "12px 14px", borderRadius: 8,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
+                          borderLeft: "3px solid var(--color-accent)",
+                        }}>
+                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
+                            {messaging.core_message}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tone */}
+                    {messaging.tone && (
+                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
+                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
+                      </div>
+                    )}
+
+                    {/* Key phrases */}
+                    {messaging.key_phrases?.length > 0 && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {messaging.key_phrases.map((p, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
+                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
+                            }}>{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CTA */}
+                    {messaging.cta && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
+                        <span style={{
+                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
+                          padding: "4px 12px", borderRadius: 7,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+                        }}>{messaging.cta}</span>
+                      </div>
+                    )}
+
+                    {/* Extra messaging keys */}
+                    {Object.entries(messaging)
+                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
+                      .map(([k, v]) => (
+                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
+                            {k.replace(/_/g, " ")}
+                          </p>
+                          <GenericValue value={v} />
+                        </div>
+                      ))
+                    }
+                  </div>
+                </SCard>
+              )}
+            </div>
+
+            {/* Right: Audience only */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
               {target_audience && (
@@ -1510,79 +1588,6 @@ function StrategyViewer({ strategy, ad, onRetry }) {
                 </SCard>
               )}
 
-              {messaging && (
-                <SCard>
-                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-
-                    {/* Core message — prominent quote block */}
-                    {messaging.core_message && (
-                      <div style={{ padding: "16px 18px" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
-                        <div style={{
-                          padding: "12px 14px", borderRadius: 8,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
-                          borderLeft: "3px solid var(--color-accent)",
-                        }}>
-                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
-                            {messaging.core_message}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tone — callout block, never a pill */}
-                    {messaging.tone && (
-                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
-                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
-                      </div>
-                    )}
-
-                    {/* Key phrases — small chips (usually short words) */}
-                    {messaging.key_phrases?.length > 0 && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                          {messaging.key_phrases.map((p, i) => (
-                            <span key={i} style={{
-                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
-                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
-                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
-                            }}>{p}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CTA — action button style */}
-                    {messaging.cta && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
-                        <span style={{
-                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
-                          padding: "4px 12px", borderRadius: 7,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
-                        }}>{messaging.cta}</span>
-                      </div>
-                    )}
-
-                    {/* Extra messaging keys */}
-                    {Object.entries(messaging)
-                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
-                      .map(([k, v]) => (
-                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
-                            {k.replace(/_/g, " ")}
-                          </p>
-                          <GenericValue value={v} />
-                        </div>
-                      ))
-                    }
-                  </div>
-                </SCard>
-              )}
             </div>
           </div>
         </div>
@@ -1615,7 +1620,7 @@ function StrategyViewer({ strategy, ad, onRetry }) {
       {(kpis?.length > 0 || budgetData) && (
         <div>
           <SBar label="Performance Targets" />
-          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 280px" : "1fr", gap: 14, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 360px" : "1fr", gap: 14, alignItems: "start" }}>
 
             {kpis?.length > 0 && (
               <SCard>
@@ -1645,44 +1650,46 @@ function StrategyViewer({ strategy, ad, onRetry }) {
       {social_content && Object.keys(social_content).length > 0 && (
         <div>
           <SBar label="Social Content & Launch Schedule" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {Object.entries(social_content).map(([platform, content]) => (
               <SCard key={platform}>
                 <SCardHead icon={<Send size={13} />} label={platform} />
-                <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
 
                   {/* Caption */}
-                  {content.caption && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
-                      <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
+                    {content.caption
+                      ? <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Hashtags */}
-                  {content.hashtags && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                        {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
-                          <span key={i} style={{
-                            fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
-                            backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                            color: "var(--color-accent)",
-                          }}>{h.startsWith("#") ? h : `#${h}`}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
+                    {content.hashtags
+                      ? <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                              color: "var(--color-accent)",
+                            }}>{h.startsWith("#") ? h : `#${h}`}</span>
+                          ))}
+                        </div>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Launch Schedule */}
-                  {content.launch_schedule && (
-                    <div style={{
-                      padding: "10px 13px", borderRadius: 10,
-                      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
-                      border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
-                    }}>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Recommended Launch Window</p>
+                  <div style={{
+                    padding: "10px 13px", borderRadius: 10,
+                    backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
+                    border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
+                  }}>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Launch Window</p>
+                    {content.launch_schedule ? <>
                       {content.launch_schedule.recommended_window && (
                         <p style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--color-input-text)", margin: "0 0 4px" }}>{content.launch_schedule.recommended_window}</p>
                       )}
@@ -1694,8 +1701,8 @@ function StrategyViewer({ strategy, ad, onRetry }) {
                       {content.launch_schedule.rationale && (
                         <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", fontStyle: "italic", margin: 0 }}>{content.launch_schedule.rationale}</p>
                       )}
-                    </div>
-                  )}
+                    </> : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>}
+                  </div>
 
                 </div>
               </SCard>
@@ -3148,6 +3155,7 @@ function CampaignDetailPageInner() {
   const [participants,     setParticipants]     = useState([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState(null);
+  const [participantAppointments, setParticipantAppointments] = useState([]);
   const [syncingTranscripts,  setSyncingTranscripts]  = useState(false);
   const [syncResult,          setSyncResult]          = useState(null);
   // Voicebot conversation history (loaded in participants tab for voicebot campaigns)
@@ -4197,7 +4205,7 @@ function CampaignDetailPageInner() {
               subtitle={`Submitted ${new Date(selectedParticipant.created_at).toLocaleString()}`}
             >
               <button
-                onClick={() => setSelectedParticipant(null)}
+                onClick={() => { setSelectedParticipant(null); setParticipantAppointments([]); }}
                 className="btn--ghost"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", marginBottom: 20 }}
               >
@@ -4284,6 +4292,32 @@ function CampaignDetailPageInner() {
                 </div>
               )}
 
+              {/* Appointment details */}
+              {participantAppointments.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                    Appointments
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {participantAppointments.map((appt) => (
+                      <div key={appt.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: "14px 16px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        {[
+                          { label: "Date",     value: new Date(appt.slot_datetime).toLocaleDateString() },
+                          { label: "Time",     value: new Date(appt.slot_datetime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
+                          { label: "Duration", value: `${appt.duration_minutes} min` },
+                          { label: "Status",   value: appt.status.charAt(0).toUpperCase() + appt.status.slice(1) },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</p>
+                            <p style={{ fontSize: "0.88rem", fontWeight: 600, color: appt.status === "confirmed" && label === "Status" ? "#16a34a" : appt.status === "cancelled" && label === "Status" ? "#dc2626" : "var(--color-input-text)" }}>{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Survey answers */}
               {selectedParticipant.answers?.length > 0 && (
                 <>
@@ -4314,7 +4348,8 @@ function CampaignDetailPageInner() {
               )}
             </SectionCard>
           ) : (
-            /* ── List view ── */
+            <>
+            {/* ── List view ── */}
             <SectionCard
               title="Participants"
               subtitle="People who completed the survey and submitted their details"
@@ -4372,7 +4407,13 @@ function CampaignDetailPageInner() {
                   {participants.map((p, idx) => (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedParticipant(p)}
+                      onClick={() => {
+                        setSelectedParticipant(p);
+                        setParticipantAppointments([]);
+                        appointmentsAPI.list(id)
+                          .then((all) => setParticipantAppointments((all || []).filter((a) => a.survey_response_id === p.id)))
+                          .catch(() => {});
+                      }}
                       style={{
                         display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px",
                         gap: 0, padding: "12px 16px", cursor: "pointer",
@@ -4502,6 +4543,8 @@ function CampaignDetailPageInner() {
                 </div>
               </SectionCard>
             )}
+            </>
+          )}
         </div>
       )}
 
