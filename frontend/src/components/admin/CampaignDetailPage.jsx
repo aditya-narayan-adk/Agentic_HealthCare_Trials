@@ -40,8 +40,14 @@ const QUESTIONNAIRE_CATEGORIES = new Set(["recruitment", "hiring", "survey", "cl
 const QUESTIONNAIRE_KEYWORDS = ["hiring", "recruit", "survey", "clinical", "trial", "research study", "job posting", "job opening", "application", "vacancy", "vacancies", "applicant", "enroll", "enrolment", "participant", "respondent"];
 
 /** Check protocol doc titles first (strongest signal), fall back to campaign title. */
-function needsQuestionnaire(ad) {
-  return !!ad;
+function needsQuestionnaire(ad, protoDocs) {
+  if (!ad) return false;
+  if (QUESTIONNAIRE_CATEGORIES.has(ad.campaign_category)) return true;
+  const titles = [
+    ad.title || "",
+    ...(protoDocs || []).map((d) => d.title || ""),
+  ].join(" ").toLowerCase();
+  return QUESTIONNAIRE_KEYWORDS.some((kw) => titles.includes(kw));
 }
 
 // ─── Protocol document preview modal ─────────────────────────────────────────
@@ -292,7 +298,7 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, showAI = true, on
     try {
       const res = await adsAPI.rewriteQuestion(adId, q, state.prompt.trim());
       const updated = res.question;
-      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...updated, id: q.id } : item));
+      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...item, ...updated, id: q.id } : item));
       setRewriteStates((prev) => ({ ...prev, [q.id]: { open: false, prompt: "", loading: false, error: null } }));
     } catch (err) {
       setRewriteStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], loading: false, error: err.message || "Rewrite failed." } }));
@@ -3243,7 +3249,7 @@ function CampaignDetailPageInner() {
         .catch(() => setConvHistory([]))
         .finally(() => setConvHistoryLoading(false));
     }
-  }, [pageTab, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pageTab, id, ad?.ad_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectConvHistory = async (conv) => {
     if (selectedConvHistory?.conversation_id === conv.conversation_id) {
@@ -3390,8 +3396,8 @@ function CampaignDetailPageInner() {
     setWebsiteLoading(true); setWebsiteError(null);
     genProgress.start("Building landing page…", 120000);
     try {
+      const prevUrl = ad?.output_url;
       const triggered = await adsAPI.generateWebsite(id);
-      const prevUrl = triggered.output_url;
       // Backend returns immediately; poll until the background task commits.
       // Website gen is slower than creatives (Claude + image + EFS write) → 10 min.
       const updated = await pollUntilUpdated(id, triggered.updated_at, 600_000);
