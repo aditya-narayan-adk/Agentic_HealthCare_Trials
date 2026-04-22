@@ -1082,21 +1082,23 @@ function BudgetDonut({ strategy }) {
     color: DONUT_PALETTE[i % DONUT_PALETTE.length],
   }));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      <div style={{ position: "relative", flexShrink: 0 }}>
-        <DonutChart slices={slices} />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+      <div style={{ position: "relative" }}>
+        <DonutChart slices={slices} size={150} />
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <DollarSign size={15} style={{ color: "var(--color-accent)" }} />
         </div>
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
         {slices.map((s) => (
-          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0 }} />
-            <p style={{ flex: 1, fontSize: "0.76rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, lineHeight: 1.4 }}>
-              {s.label.replace(/_/g, " ")}
-            </p>
-            <p style={{ fontSize: "0.82rem", fontWeight: 800, color: s.color, flexShrink: 0, margin: 0 }}>{s.pct}%</p>
+          <div key={s.label} style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0, marginTop: 3 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: "0.74rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, lineHeight: 1.4 }}>
+                {s.label.replace(/_/g, " ")}
+              </p>
+              <p style={{ fontSize: "0.78rem", fontWeight: 800, color: s.color, margin: 0 }}>{s.pct}%</p>
+            </div>
           </div>
         ))}
       </div>
@@ -1612,7 +1614,7 @@ function StrategyViewer({ strategy, ad, onRetry }) {
       {(kpis?.length > 0 || budgetData) && (
         <div>
           <SBar label="Performance Targets" />
-          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 280px" : "1fr", gap: 14, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 360px" : "1fr", gap: 14, alignItems: "start" }}>
 
             {kpis?.length > 0 && (
               <SCard>
