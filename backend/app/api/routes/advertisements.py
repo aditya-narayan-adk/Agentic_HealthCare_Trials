@@ -1125,10 +1125,10 @@ async def distribute_to_meta(
             )
 
     # ── Publish to Meta ───────────────────────────────────────────────────────
-    # Reuse existing campaign/adset IDs when republishing so analytics history is preserved.
+    # Reuse the existing campaign ID so analytics history is preserved, but always
+    # create a fresh adset — archived adsets cannot contain new active ads.
     existing_bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     existing_campaign_id = existing_bot.get("meta_campaign_id") or None
-    existing_adset_id    = existing_bot.get("meta_adset_id")    or None
 
     svc = MetaAdsService(access_token=access_token, ad_account_id=ad_account_id)
     try:
@@ -1145,7 +1145,6 @@ async def distribute_to_meta(
             addon_type=addon_type,
             addon_phone=addon_phone,
             existing_campaign_id=existing_campaign_id,
-            existing_adset_id=existing_adset_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
