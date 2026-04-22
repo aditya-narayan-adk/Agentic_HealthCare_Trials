@@ -4562,7 +4562,7 @@ function CampaignDetailPageInner() {
                     ? <InlineProgress progress={genProgress.progress} />
                     : !ad.output_files?.length && (
                         <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>
-                          Generates copy + images for all ad formats · uses AWS Bedrock Titan
+                          Generates copy + images for all ad formats using AI
                         </p>
                       )
                   }
