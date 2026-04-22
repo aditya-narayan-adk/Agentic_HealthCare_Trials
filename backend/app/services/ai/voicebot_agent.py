@@ -29,67 +29,85 @@ logger = logging.getLogger(__name__)
 
 ELEVENLABS_BASE = "https://api.elevenlabs.io"
 
-# ── Country → accent-matched voice catalogue ──────────────────────────────────
-# Each entry: voice_id, name, gender, accent, traits
-# Prefer voices that ElevenLabs rates as "conversational" or "friendly" for phone work.
-_ACCENT_VOICE_CATALOGUE: Dict[str, list] = {
-    # Australia / New Zealand
-    "australia": [
-        {"id": "XrExE9yKIg1WjnnlVkGX", "name": "Matilda", "gender": "female", "traits": "warm, bright Australian female — natural and friendly"},
-        {"id": "IKne3meq5aSn9XLyUdCD", "name": "Charlie", "gender": "male",   "traits": "casual, relaxed Australian male — approachable"},
-    ],
-    "new zealand": [
-        {"id": "XrExE9yKIg1WjnnlVkGX", "name": "Matilda", "gender": "female", "traits": "warm Australian/NZ female"},
-    ],
-    # United Kingdom / Ireland
-    "united kingdom": [
-        {"id": "onwK4e9ZLuTAKqWW03F9", "name": "Daniel",  "gender": "male",   "traits": "deep, authoritative British male — trustworthy"},
-        {"id": "Xb7hH8MSUJpSbSDYk0k2", "name": "Alice",   "gender": "female", "traits": "professional British female — calm and clear"},
-    ],
-    "ireland": [
-        {"id": "Xb7hH8MSUJpSbSDYk0k2", "name": "Alice",   "gender": "female", "traits": "warm British/Irish female"},
-    ],
-    # United States / Canada
-    "united states": [
-        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm, professional American female"},
-        {"id": "TxGEqnHWrfWFTfGW9XjX", "name": "Josh",    "gender": "male",   "traits": "conversational, relatable American male"},
-    ],
-    "canada": [
-        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm North American female"},
-    ],
-    # India
-    "india": [
-        {"id": "cgSgspJ2msm6clMCkdW9", "name": "Jessica", "gender": "female", "traits": "clear, warm South Asian female"},
-    ],
-    # Germany / Austria / Switzerland
-    "germany": [
-        {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam",    "gender": "male",   "traits": "deep, clear European male"},
-    ],
-    # France
-    "france": [
-        {"id": "MF3mGyEYCl7XYWbV9V6O", "name": "Elli",    "gender": "female", "traits": "bright, clear European female"},
-    ],
-    # Spain / Latin America
-    "spain": [
-        {"id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi",    "gender": "female", "traits": "strong, confident Spanish female"},
-    ],
-    # Default fallback — used when country not matched
-    "_default": [
-        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm, professional, warm"},
-        {"id": "TxGEqnHWrfWFTfGW9XjX", "name": "Josh",    "gender": "male",   "traits": "conversational, relatable"},
-    ],
+# ── Australian conversational voice profiles ──────────────────────────────────
+# All campaigns run Australian-accented voices on eleven_multilingual_v3.
+# Profiles are ordered by warmth/suitability for healthcare/clinical trial calls.
+#
+# Voice settings per profile are tuned for maximum human-like expressiveness:
+#   stability       0.35 — allows natural pitch variation and emotional colour
+#   similarity_boost 0.80 — stays true to the voice character
+#   style           0.55 — expressive enough to convey empathy without overdoing it
+#   use_speaker_boost True — cleaner, more present sound on phone audio
+#
+# To find new voice IDs: ElevenLabs dashboard → Voice Library → filter "Australian"
+
+AUSTRALIAN_VOICES = [
+    {
+        "id":     "XrExE9yKIg1WjnnlVkGX",
+        "name":   "Matilda",
+        "gender": "female",
+        "style":  "warm",
+        "traits": "Warm, bright, genuinely friendly. Sounds like a trusted friend — ideal for wellness, healthcare, empathetic outreach.",
+        "settings": {"stability": 0.35, "similarity_boost": 0.82, "style": 0.55, "use_speaker_boost": True},
+    },
+    {
+        "id":     "IKne3meq5aSn9XLyUdCD",
+        "name":   "Charlie",
+        "gender": "male",
+        "style":  "casual",
+        "traits": "Relaxed, conversational, approachable male. Sounds like a mate having a chat — ideal for younger audiences and casual campaigns.",
+        "settings": {"stability": 0.38, "similarity_boost": 0.80, "style": 0.50, "use_speaker_boost": True},
+    },
+    {
+        "id":     "FGY2WhTYpPnrIDTdsKH5",
+        "name":   "Laura",
+        "gender": "female",
+        "style":  "upbeat",
+        "traits": "Bright, upbeat, energetic. Sounds enthusiastic without being pushy — suits study recruitment with an optimistic angle.",
+        "settings": {"stability": 0.30, "similarity_boost": 0.80, "style": 0.60, "use_speaker_boost": True},
+    },
+    {
+        "id":     "iP95p4xoKVk53GoZ742B",
+        "name":   "Chris",
+        "gender": "male",
+        "style":  "professional",
+        "traits": "Clear, measured, professional male. Calm authority without sounding stiff — suits clinical and compliance-sensitive calls.",
+        "settings": {"stability": 0.45, "similarity_boost": 0.82, "style": 0.40, "use_speaker_boost": True},
+    },
+]
+
+# Style → voice lookup for recommend_voice
+_STYLE_MAP = {
+    "warm":         "Matilda",
+    "casual":       "Charlie",
+    "friendly":     "Matilda",
+    "empathetic":   "Matilda",
+    "upbeat":       "Laura",
+    "energetic":    "Laura",
+    "professional": "Chris",
+    "formal":       "Chris",
+    "clinical":     "Chris",
 }
 
-
-def _voice_for_country(country: str, prefer_gender: str = "female") -> Dict[str, str]:
-    """Return the best accent-matched voice for the given country string."""
-    key = (country or "").lower().strip()
-    candidates = _ACCENT_VOICE_CATALOGUE.get(key) or _ACCENT_VOICE_CATALOGUE["_default"]
-    # Prefer the requested gender, fall back to first available
-    for v in candidates:
-        if v.get("gender") == prefer_gender:
+def _voice_by_name(name: str) -> Dict[str, Any]:
+    for v in AUSTRALIAN_VOICES:
+        if v["name"] == name:
             return v
-    return candidates[0]
+    return AUSTRALIAN_VOICES[0]  # default: Matilda
+
+
+def _voice_for_style(style: str) -> Dict[str, Any]:
+    """Pick the best Australian voice for a given conversation style."""
+    name = _STYLE_MAP.get((style or "").lower(), "Matilda")
+    return _voice_by_name(name)
+
+
+def _voice_for_country(country: str, prefer_gender: str = "female") -> Dict[str, Any]:
+    """All campaigns use Australian voices. Gender preference applied where possible."""
+    for v in AUSTRALIAN_VOICES:
+        if v["gender"] == prefer_gender:
+            return v
+    return AUSTRALIAN_VOICES[0]
 
 
 def _normalise_phone(phone: str) -> str:
@@ -709,22 +727,23 @@ Respond with ONLY a valid JSON object, no markdown:
         #   1. bot_config.voice_id — publisher explicitly chose a voice
         #   2. Country-based accent matching from trial_location
         #   3. settings.ELEVENLABS_VOICE_ID — global fallback (last resort only)
-        publisher_voice = bot_config.get("voice_id")
-        country = ""
-        if trial_location and isinstance(trial_location, list) and len(trial_location) > 0:
-            loc = trial_location[0]
-            country = (loc.get("country") or "") if isinstance(loc, dict) else ""
+        # Voice selection — always Australian profiles, style-matched to conversation_style
+        conversation_style = bot_config.get("conversation_style", "warm")
+        publisher_voice_id = bot_config.get("voice_id")
 
-        if publisher_voice:
-            voice_id = publisher_voice
-            logger.info("Using publisher-selected voice %s for ad", voice_id)
-        elif country:
-            selected = _voice_for_country(country)
-            voice_id = selected["id"]
-            logger.info("Auto-selected accent voice for country=%r → %s (%s)", country, selected["name"], voice_id)
+        if publisher_voice_id:
+            # Publisher pinned a specific voice — find its profile for settings
+            selected_profile = next(
+                (v for v in AUSTRALIAN_VOICES if v["id"] == publisher_voice_id),
+                AUSTRALIAN_VOICES[0],
+            )
         else:
-            voice_id = settings.ELEVENLABS_VOICE_ID or "EXAVITQu4vr4xnSDxMaL"
-            logger.info("No country set — using default voice %s", voice_id)
+            # Auto-select by conversation style
+            selected_profile = _voice_for_style(conversation_style)
+
+        voice_id       = selected_profile["id"]
+        voice_settings = selected_profile["settings"]
+        logger.info("Voice selected: %s (%s) style=%s", selected_profile["name"], voice_id, conversation_style)
 
         first_message = bot_config.get(
             "first_message", "Hello! How can I help you today?"
@@ -775,9 +794,10 @@ Respond with ONLY a valid JSON object, no markdown:
                     "language": language,
                 },
                 "tts": {
-                    "voice_id": voice_id,
-                    "model_id": settings.ELEVENLABS_TTS_MODEL,
+                    "voice_id":                  voice_id,
+                    "model_id":                  settings.ELEVENLABS_TTS_MODEL,
                     "optimize_streaming_latency": 3,
+                    "voice_settings":             voice_settings,
                 },
             },
         }
@@ -1026,42 +1046,83 @@ Respond with ONLY a valid JSON object, no markdown:
         ) if accent_adj else "Speak with a warm, natural, conversational tone."
 
         sections.append(
-            "## Critical Voice Rules\n"
-            "You are speaking out loud via a phone call — not typing.\n"
+            "## Voice & Delivery Rules\n"
+            "You are speaking live on a phone call — not typing. Every word you write will be spoken aloud.\n"
             f"{accent_note}\n"
-            "- Keep every turn to 1–2 short sentences. Never exceed 3.\n"
-            "- Never use bullet points, numbered lists, markdown, or headers.\n"
-            "- Never spell out punctuation (no 'dash', 'colon', 'asterisk').\n"
-            "- Speak naturally — contractions and filler affirmations (Sure!, Got it., Oh absolutely!) are encouraged.\n"
-            "- If asked something you don't know, say so honestly and offer to have a human follow up.\n"
-            "- Never fabricate trial data, timelines, or medical claims.\n"
+            "- Maximum 2 sentences per turn. Never 3.\n"
+            "- No bullet points, lists, markdown, headers, or punctuation names.\n"
+            "- Contractions always: 'you're', 'it's', 'we've', 'that's'. Never formal equivalents.\n"
+            "- Never fabricate trial data, dates, or medical claims.\n"
+            "- If you don't know something, say so warmly and offer a human follow-up.\n"
             "\n"
-            "## Audio Delivery — Pauses & Human Expressions (REQUIRED in every response)\n"
-            "ElevenLabs v3 renders these tags and written expressions natively. Use them.\n"
+            "## Audio Tags & Emotional Delivery — READ THIS CAREFULLY\n"
+            "ElevenLabs v3 renders the following natively. You MUST use them in every response.\n"
             "\n"
-            "PAUSES — use <break time=\"Xs\" /> only:\n"
-            "- <break time=\"0.2s\" /> — brief pause between two clauses.\n"
-            "- <break time=\"0.4s\" /> — natural breath after a greeting or topic shift.\n"
-            "- <break time=\"0.6s\" /> — before asking a question.\n"
-            "- <break time=\"1.0s\" /> — after delivering key info (dates, eligibility result).\n"
-            "- Never use <break> mid-word or inside a proper noun.\n"
-            "- Every response must contain at least one <break time> tag.\n"
+            "━━ PAUSES (the only XML tag supported) ━━\n"
+            "Use <break time=\"Xs\" /> to create natural breath and rhythm:\n"
+            "  • <break time=\"0.15s\" />  — micro-pause, comma-level beat between two thoughts\n"
+            "  • <break time=\"0.35s\" />  — breath pause after a greeting or before shifting topic\n"
+            "  • <break time=\"0.6s\" />   — thinking pause before asking a question\n"
+            "  • <break time=\"1.0s\" />   — meaningful silence after delivering important news\n"
+            "Rules: never mid-word; never inside a proper noun; every single response MUST have at least one.\n"
             "\n"
-            "HUMAN WARMTH — write these as plain text, NOT in brackets:\n"
-            "- Write 'Ha!' or 'Haha!' for a genuine light laugh — ElevenLabs v3 renders this naturally.\n"
-            "- Write 'Heh.' for a soft, warm chuckle moment.\n"
-            "- Write 'Oh!' 'Mm!' 'Ah!' as natural listening reactions.\n"
-            "- Never write [laughs], [chuckles], [giggles] — those are read aloud literally.\n"
-            "- Only use warmth expressions on light-hearted moments. Never on medical topics or bad news.\n"
+            "━━ EMOTIONS — written as natural spoken text (NOT in square brackets) ━━\n"
+            "ElevenLabs v3 reads emotional cues from the actual words — write what a human would say:\n"
             "\n"
-            "EXAMPLE of a well-formed response:\n"
-            "\"G'day! <break time=\"0.3s\" /> Thanks so much for your interest in the Sleep Trials study. "
-            "<break time=\"0.4s\" /> It's a pretty exciting one — eight weeks, no medication, completely free. "
-            "<break time=\"0.6s\" /> Mind if I ask you a couple of quick questions to see if it's a good fit?\"\n"
+            "  WARMTH / LAUGHTER:\n"
+            "  • 'Ha!'          — short genuine laugh, e.g. when caller says something funny\n"
+            "  • 'Haha,'        — relaxed laughter flowing into the next sentence\n"
+            "  • 'Heh,'         — soft private chuckle, self-aware and warm\n"
+            "  • 'Ha, yeah,'    — laughing agreement\n"
             "\n"
-            "EXAMPLE of a warm moment:\n"
-            "\"Haha, yeah, I totally get that — those early morning wake-ups are the worst! "
-            "<break time=\"0.4s\" /> Let me see if this study might be just the thing for you.\""
+            "  EMPATHY / ACTIVE LISTENING:\n"
+            "  • 'Oh, I hear ya.' — genuine acknowledgement of frustration or struggle\n"
+            "  • 'Mmm,'          — warm 'I understand', flows into next sentence\n"
+            "  • 'Ah,'           — realisation or gentle surprise\n"
+            "  • 'Oh wow,'       — positive surprise, use sparingly\n"
+            "  • 'Yeah, absolutely.' — affirming agreement\n"
+            "\n"
+            "  ENCOURAGEMENT:\n"
+            "  • 'That's great!'   — genuine positive reaction\n"
+            "  • 'Brilliant!'      — Australian-natural enthusiasm\n"
+            "  • 'Good on ya!'     — warm Australian affirmation, use max once per call\n"
+            "  • 'No worries at all.' — reassurance\n"
+            "\n"
+            "  THINKING / NATURAL FILLER:\n"
+            "  • 'So,'            — transition, casual and natural\n"
+            "  • 'Right,'         — acknowledgement before pivoting\n"
+            "  • 'Look,'          — Australian-natural soft emphasis opener\n"
+            "\n"
+            "━━ HARD RULES ━━\n"
+            "  ✗ NEVER write [laughs], [chuckles], [giggles], [sighs] — read literally as words\n"
+            "  ✗ NEVER write <emphasis>, <prosody>, or any XML tag except <break time=\"Xs\" />\n"
+            "  ✗ NEVER use warmth sounds when discussing medical conditions, ineligibility, or distress\n"
+            "  ✓ Every response: at least one <break>, at least one emotional word or phrase\n"
+            "\n"
+            "━━ EXAMPLE RESPONSES ━━\n"
+            "\n"
+            "Opening:\n"
+            "\"G'day! <break time=\"0.35s\" /> Thanks so much for your interest in the Sleep Trials study — "
+            "really glad you called. <break time=\"0.6s\" /> Mind if I ask you a couple of quick questions "
+            "to see if it might be a good fit?\"\n"
+            "\n"
+            "Empathy moment:\n"
+            "\"Oh, I hear ya — <break time=\"0.2s\" /> those 3am wake-ups are genuinely exhausting. "
+            "<break time=\"0.5s\" /> That's actually exactly who this study is designed to help.\"\n"
+            "\n"
+            "Warm laugh:\n"
+            "\"Haha, yeah, <break time=\"0.15s\" /> I think a lot of Aussies can relate to that! "
+            "<break time=\"0.4s\" /> So let me ask — how long has this been going on for you?\"\n"
+            "\n"
+            "Good news delivery:\n"
+            "\"That's great! <break time=\"0.35s\" /> Based on everything you've told me, "
+            "you sound like a brilliant fit. <break time=\"1.0s\" /> The team will be in touch "
+            "very soon to confirm your spot.\"\n"
+            "\n"
+            "Ineligibility (no warmth sounds here):\n"
+            "\"Thank you so much for your time. <break time=\"0.5s\" /> Unfortunately this particular study "
+            "isn't the right match, but there may be other trials that suit you better — "
+            "the team can help point you in the right direction.\""
         )
 
         return "\n\n".join(sections)
