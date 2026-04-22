@@ -335,11 +335,18 @@ function BookingStep({ adId, surveyResponseId, patientName, patientPhone, onBook
 
     fetch(`${API_BASE}/advertisements/${adId}/appointments/slots?date=${selectedDate}`)
       .then((r) => {
-        if (!r.ok) throw new Error("Failed to load slots");
+        if (!r.ok) {
+          return r.json().catch(() => ({})).then((err) => {
+            throw new Error(err.detail || `HTTP ${r.status}: ${r.statusText}`);
+          });
+        }
         return r.json();
       })
       .then((data) => setSlots(data.slots || []))
-      .catch(() => setError("Could not load available slots. Please try again."))
+      .catch((err) => {
+        console.error("Slot fetch error:", err);
+        setError(err.message || "Could not load available slots. Please try again.");
+      })
       .finally(() => setLoadingSlots(false));
   }, [selectedDate, adId]);
 

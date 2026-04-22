@@ -111,7 +111,6 @@ app.include_router(chat.router,             prefix="/api")
 app.include_router(bookings.router,         prefix="/api")
 app.include_router(survey_responses.router, prefix="/api")
 app.include_router(platform_connections.router,  prefix="/api")
-app.include_router(bookings.router,              prefix="/api")
 
 
 @app.get("/api/health")

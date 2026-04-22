@@ -1,8 +1,8 @@
-name: Deploy to AWS ECS (clinadspro.com)
+name: Deploy to AWS ECS (d2s8k22yb5c8me.cloudfront.net)
 
 # Triggers on push to either branch:
-#   dev  → deploys to production (clinadspro.com)
-#   main → deploys to production (clinadspro.com)
+#   dev  → deploys to production (d2s8k22yb5c8me.cloudfront.net)
+#   main → deploys to production (d2s8k22yb5c8me.cloudfront.net)
 # Remove the branch you don't want triggering deploys.
 on:
   push:
