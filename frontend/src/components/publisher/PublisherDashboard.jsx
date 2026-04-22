@@ -1040,16 +1040,13 @@ function PublishedCampaignPanel({ ad, onPreviewAd, onUpdateAd }) {
   );
 }
 
-// ElevenLabs voice options (popular voices from the voice library)
+// Australian ElevenLabs voice profiles — matches AUSTRALIAN_VOICES in voicebot_agent.py
 const ELEVEN_VOICES = [
-  { id: "EXAVITQu4vr4xnSDxMaL", label: "Rachel — Calm, professional (F)" },
-  { id: "pNInz6obpgDQGcFmaJgB", label: "Adam — Deep, authoritative (M)" },
-  { id: "oWAxZDx7w5VEj9dCyTzz", label: "Grace — Warm, friendly (F)" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", label: "Josh — Conversational (M)" },
-  { id: "AZnzlk1XvdvUeBnXmlld", label: "Domi — Strong, confident (F)" },
-  { id: "VR6AewLTigWG4xSOukaG", label: "Arnold — Crisp, clear (M)" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", label: "Elli — Bright, energetic (F)" },
-  { id: "XB0fDUnXU5powFXDhCwa", label: "Charlotte — Sophisticated (F)" },
+  { id: "XrExE9yKIg1WjnnlVkGX", label: "Matilda — Warm, friendly (F) · Australian" },
+  { id: "IKne3meq5aSn9XLyUdCD", label: "Charlie — Casual, approachable (M) · Australian" },
+  { id: "FGY2WhTYpPnrIDTdsKH5", label: "Laura — Upbeat, energetic (F) · Australian" },
+  { id: "iP95p4xoKVk53GoZ742B", label: "Chris — Professional, measured (M) · Australian" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", label: "Aimee — Friendly, natural (F) · Australian" },
 ];
 
 function VoicebotConfig({ ad }) {
@@ -1057,7 +1054,7 @@ function VoicebotConfig({ ad }) {
 
   const [form, setForm] = useState({
     bot_name:      existing.bot_name      || "Assistant",
-    voice_id:      existing.voice_id      || "EXAVITQu4vr4xnSDxMaL",
+    voice_id:      existing.voice_id      || "XrExE9yKIg1WjnnlVkGX",  // default: Matilda (Australian)
     first_message: existing.first_message || "Hi! How can I help you today?",
     // conversation_style, language, compliance_notes are set by AI recommendation — not exposed to the user
   });

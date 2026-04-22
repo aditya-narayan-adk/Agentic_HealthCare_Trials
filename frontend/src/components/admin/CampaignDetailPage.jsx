@@ -2125,16 +2125,13 @@ class DetailErrorBoundary extends Component {
   }
 }
 
-// ─── ElevenLabs voice catalogue (mirrors voicebot_agent.py) ──────────────────
+// ─── Australian ElevenLabs voice catalogue (mirrors AUSTRALIAN_VOICES in voicebot_agent.py) ──
 const VOICE_CATALOGUE = [
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Rachel",    desc: "Calm · professional · warm female" },
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam",      desc: "Deep · authoritative male" },
-  { id: "oWAxZDx7w5VEj9dCyTzz", name: "Grace",     desc: "Warm · friendly female" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",      desc: "Conversational · relatable male" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",      desc: "Strong · confident female" },
-  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold",    desc: "Crisp · clear male" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli",      desc: "Bright · energetic female" },
-  { id: "XB0fDUnXU5powFXDhCwa", name: "Charlotte", desc: "Sophisticated · composed female" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "Warm · friendly · Australian female" },
+  { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie", desc: "Casual · approachable · Australian male" },
+  { id: "FGY2WhTYpPnrIDTdsKH5", name: "Laura",   desc: "Upbeat · energetic · Australian female" },
+  { id: "iP95p4xoKVk53GoZ742B", name: "Chris",   desc: "Professional · measured · Australian male" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Aimee",  desc: "Friendly · natural · Australian female" },
 ];
 const CONV_STYLES = ["professional", "friendly", "casual", "formal", "empathetic", "energetic"];
 const VOICE_LANGUAGES = [
@@ -2401,7 +2398,7 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
   const canEdit = isPublisher || isStudyCoordinator;
   const cfg     = ad.bot_config || {};
 
-  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "EXAVITQu4vr4xnSDxMaL");
+  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "XrExE9yKIg1WjnnlVkGX"); // default: Matilda (Australian)
   const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "Hello! How can I help you today?");
   const [language,   setLanguage]   = useState(cfg.language            || "en");
   const [botName,    setBotName]    = useState(cfg.bot_name            || "");

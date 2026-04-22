@@ -74,13 +74,21 @@ AUSTRALIAN_VOICES = [
         "traits": "Clear, measured, professional male. Calm authority without sounding stiff — suits clinical and compliance-sensitive calls.",
         "settings": {"stability": 0.45, "similarity_boost": 0.82, "style": 0.40, "use_speaker_boost": True},
     },
+    {
+        "id":     "pFZP5JQG7iQjIQuC4Bku",
+        "name":   "Aimee",
+        "gender": "female",
+        "style":  "friendly",
+        "traits": "Clear, natural, youthful Australian female. Confident and personable — great for general outreach and study recruitment.",
+        "settings": {"stability": 0.38, "similarity_boost": 0.82, "style": 0.52, "use_speaker_boost": True},
+    },
 ]
 
 # Style → voice lookup for recommend_voice
 _STYLE_MAP = {
     "warm":         "Matilda",
     "casual":       "Charlie",
-    "friendly":     "Matilda",
+    "friendly":     "Aimee",
     "empathetic":   "Matilda",
     "upbeat":       "Laura",
     "energetic":    "Laura",
