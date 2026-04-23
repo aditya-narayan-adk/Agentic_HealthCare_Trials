@@ -712,6 +712,31 @@
       /* 4. Start WebSocket voice session — audio never touches our servers */
       conversation = await Conversation.startSession({
         signedUrl: data.signed_url,
+        config: {
+          audio: {
+            input: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            output: { echoCancellation: false }
+          },
+          turn_detection: {
+            enabled: true,
+            mode: 'hybrid',
+            client: {
+              enabled: true,
+              threshold: 0.5,
+              silence_ms: 400
+            },
+            server: {
+              enabled: true,
+              sensitivity: 'high'
+            }
+          }
+        },
+        onInterrupt: function() {
+          console.log('[Interruption detected - stopping audio]');
+          if (conversation && conversation.isPlaying) {
+            conversation.stopAudio();
+          }
+        },
         onConnect: function () {
           setBtn('⏹ End Call', false);
         },

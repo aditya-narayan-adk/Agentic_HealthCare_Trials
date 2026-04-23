@@ -9,16 +9,32 @@ import re
 from pathlib import Path
 
 # Configuration to insert into Conversation.startSession
+# FIXED: output echoCancellation disabled to prevent VAD interference
+# ENHANCED: hybrid mode with client-side VAD for instant interruption
 CONFIG_INSERT = """,
         config: {
           audio: {
             input: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            output: { echoCancellation: true }
+            output: { echoCancellation: false }
           },
           turn_detection: {
             enabled: true,
-            mode: 'server',
-            sensitivity: 'high'
+            mode: 'hybrid',
+            client: {
+              enabled: true,
+              threshold: 0.5,
+              silence_ms: 400
+            },
+            server: {
+              enabled: true,
+              sensitivity: 'high'
+            }
+          }
+        },
+        onInterrupt: function() {
+          console.log('[Interruption detected - stopping audio]');
+          if (conversation && conversation.isPlaying) {
+            conversation.stopAudio();
           }
         }"""
 

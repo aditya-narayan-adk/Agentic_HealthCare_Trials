@@ -33,11 +33,11 @@ ELEVENLABS_BASE = "https://api.elevenlabs.io"
 # All campaigns run Australian-accented voices on eleven_multilingual_v3.
 # Profiles are ordered by warmth/suitability for healthcare/clinical trial calls.
 #
-# Voice settings per profile are tuned for maximum human-like expressiveness:
-#   stability       0.35 — allows natural pitch variation and emotional colour
+# Voice settings per profile are tuned for clear turn detection and interruption handling:
+#   stability       0.55 — more predictable pauses for better VAD detection
 #   similarity_boost 0.80 — stays true to the voice character
-#   style           0.55 — expressive enough to convey empathy without overdoing it
-#   use_speaker_boost True — cleaner, more present sound on phone audio
+#   style           0.35 — less expressive to reduce trailing audio artifacts
+#   use_speaker_boost False — prevents volume bias in VAD interruption detection
 #
 # To find new voice IDs: ElevenLabs dashboard → Voice Library → filter "Australian"
 
@@ -48,7 +48,7 @@ AUSTRALIAN_VOICES = [
         "gender": "female",
         "style":  "warm",
         "traits": "Warm, bright, genuinely friendly. Sounds like a trusted friend — ideal for wellness, healthcare, empathetic outreach.",
-        "settings": {"stability": 0.35, "similarity_boost": 0.82, "style": 0.55, "use_speaker_boost": True},
+        "settings": {"stability": 0.55, "similarity_boost": 0.82, "style": 0.35, "use_speaker_boost": False},
     },
     {
         "id":     "IKne3meq5aSn9XLyUdCD",
@@ -56,7 +56,7 @@ AUSTRALIAN_VOICES = [
         "gender": "male",
         "style":  "casual",
         "traits": "Relaxed, conversational, approachable male. Sounds like a mate having a chat — ideal for younger audiences and casual campaigns.",
-        "settings": {"stability": 0.38, "similarity_boost": 0.80, "style": 0.50, "use_speaker_boost": True},
+        "settings": {"stability": 0.55, "similarity_boost": 0.80, "style": 0.35, "use_speaker_boost": False},
     },
     {
         "id":     "FGY2WhTYpPnrIDTdsKH5",
@@ -64,7 +64,7 @@ AUSTRALIAN_VOICES = [
         "gender": "female",
         "style":  "upbeat",
         "traits": "Bright, upbeat, energetic. Sounds enthusiastic without being pushy — suits study recruitment with an optimistic angle.",
-        "settings": {"stability": 0.30, "similarity_boost": 0.80, "style": 0.60, "use_speaker_boost": True},
+        "settings": {"stability": 0.55, "similarity_boost": 0.80, "style": 0.35, "use_speaker_boost": False},
     },
     {
         "id":     "iP95p4xoKVk53GoZ742B",
@@ -72,7 +72,7 @@ AUSTRALIAN_VOICES = [
         "gender": "male",
         "style":  "professional",
         "traits": "Clear, measured, professional male. Calm authority without sounding stiff — suits clinical and compliance-sensitive calls.",
-        "settings": {"stability": 0.45, "similarity_boost": 0.82, "style": 0.40, "use_speaker_boost": True},
+        "settings": {"stability": 0.55, "similarity_boost": 0.82, "style": 0.35, "use_speaker_boost": False},
     },
     {
         "id":     "pFZP5JQG7iQjIQuC4Bku",
@@ -80,7 +80,7 @@ AUSTRALIAN_VOICES = [
         "gender": "female",
         "style":  "friendly",
         "traits": "Clear, natural, youthful Australian female. Confident and personable — great for general outreach and study recruitment.",
-        "settings": {"stability": 0.38, "similarity_boost": 0.82, "style": 0.52, "use_speaker_boost": True},
+        "settings": {"stability": 0.55, "similarity_boost": 0.82, "style": 0.35, "use_speaker_boost": False},
     },
 ]
 
@@ -832,18 +832,19 @@ Respond with ONLY a valid JSON object, no markdown:
                 "tts": {
                     "voice_id":                  voice_id,
                     "model_id":                  settings.ELEVENLABS_TTS_MODEL,
-                    "optimize_streaming_latency": 3,
+                    "optimize_streaming_latency": 4,  # Maximum latency optimization (3 → 4)
                     "voice_settings":             voice_settings,
                 },
                 "asr": {
-                    "quality": "high",
+                    "quality": "balanced",  # Faster processing (high → balanced)
                     "user_input_audio_format": "pcm_16000",
                 },
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.4,
-                    "prefix_padding_ms": 200,
-                    "silence_duration_ms": 700,
+                    "threshold": 0.3,              # More sensitive detection (0.4 → 0.3)
+                    "prefix_padding_ms": 150,      # Faster reaction time (200 → 150)
+                    "silence_duration_ms": 500,    # Quicker turn ending (700 → 500)
+                    "interrupt_threshold": 0.5,    # CRITICAL: Enables mid-speech interruption
                 },
                 "conversation": {
                     "max_duration_seconds": 1800,
