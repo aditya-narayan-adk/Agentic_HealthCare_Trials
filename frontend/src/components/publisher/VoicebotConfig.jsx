@@ -25,7 +25,7 @@ export default function VoicebotConfig({ ad }) {
   useEffect(() => {
     adsAPI.getAustralianVoices(ad.id)
       .then((data) => setVoices(data.voices || []))
-      .catch(() => setVoices([]))
+      .catch((err) => { console.error("getAustralianVoices failed:", err); setVoices([]); })
       .finally(() => setVoicesLoading(false));
   }, [ad.id]);
 
