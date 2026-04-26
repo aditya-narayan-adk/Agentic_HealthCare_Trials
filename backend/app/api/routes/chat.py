@@ -79,19 +79,27 @@ _ad_cache: dict = {}
 _CACHE_TTL = 300  # seconds
 
 
-_STRATEGY_BUDGET_KEYS = {"budget_breakdown", "budget_allocation", "budget", "media_budget", "spend"}
+# Keys stripped from strategy_json before it is passed to the LLM.
+# Budget and participant/enrollment counts must never reach the chatbot context.
+_PRIVATE_STRATEGY_KEYS = {
+    # budget
+    "budget_breakdown", "budget_allocation", "budget", "media_budget", "spend",
+    # participant / enrollment targets
+    "patients_required", "enrollment_target", "sample_size", "participant_count",
+    "target_enrollment", "recruitment_target", "quota", "headcount",
+}
 
-
-def _strip_budget(obj):
-    """Recursively remove budget-related keys from strategy_json before caching."""
+def _strip_private(obj):
+    """Recursively remove private keys from strategy_json before the LLM sees it."""
     if isinstance(obj, dict):
         return {
-            k: _strip_budget(v)
+            k: _strip_private(v)
             for k, v in obj.items()
-            if k.lower() not in _STRATEGY_BUDGET_KEYS and "budget" not in k.lower()
+            if k.lower() not in _PRIVATE_STRATEGY_KEYS
+            and not any(kw in k.lower() for kw in ("budget", "patient", "participant", "enroll", "quota", "sample_size"))
         }
     if isinstance(obj, list):
-        return [_strip_budget(i) for i in obj]
+        return [_strip_private(i) for i in obj]
     return obj
 
 
@@ -104,13 +112,12 @@ def _ad_to_dict(ad: Advertisement) -> dict:
         "trial_start_date":  str(ad.trial_start_date) if ad.trial_start_date else None,
         "trial_end_date":    str(ad.trial_end_date)   if ad.trial_end_date   else None,
         "trial_location":    ad.trial_location,
-        "patients_required": ad.patients_required,
+        # patients_required and budget excluded — must never reach the LLM context
         "bot_config":        ad.bot_config,
         "booking_config":    ad.booking_config,
         "strategy_json":     _strip_budget(ad.strategy_json),   # budget fields removed
         "website_reqs":      ad.website_reqs,
         "questionnaire":     ad.questionnaire,
-        # ad.budget (top-level column) intentionally excluded
     }
 
 
