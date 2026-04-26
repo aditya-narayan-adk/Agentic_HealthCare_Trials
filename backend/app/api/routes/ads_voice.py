@@ -420,7 +420,7 @@ async def get_voice_session_token(
 @router.get("/voice-profiles/australian")
 async def list_australian_voices(
     user: User = Depends(require_roles([UserRole.PUBLISHER])),
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> Dict[str, Any]:
     """
     Return all voices available in the ElevenLabs account (pre-made + cloned + generated).
     Used by the publisher panel voice picker.
