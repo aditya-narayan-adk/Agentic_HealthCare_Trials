@@ -422,7 +422,7 @@ async def list_australian_voices(
     user: User = Depends(require_roles([UserRole.PUBLISHER])),
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Return all Australian-accent voices available in the ElevenLabs account.
+    Return all voices available in the ElevenLabs account (pre-made + cloned + generated).
     Used by the publisher panel voice picker.
 
     Each entry includes:
@@ -446,37 +446,25 @@ async def list_australian_voices(
 
     all_voices: List[Dict[str, Any]] = data.get("voices", [])
 
-    def _is_australian(v: Dict[str, Any]) -> bool:
-        labels = v.get("labels", {})
-        searchable = " ".join([
-            str(labels.get("accent", "")),
-            str(labels.get("description", "")),
-            str(labels.get("use_case", "")),
-            str(v.get("name", "")),
-            str(v.get("description", "")),
-        ]).lower()
-        return "australian" in searchable or "aussie" in searchable
-
-    australian = [
+    voices = [
         {
             "voice_id":    v.get("voice_id", ""),
             "name":        v.get("name", ""),
             "preview_url": v.get("preview_url", ""),
             "gender":      v.get("labels", {}).get("gender", ""),
             "age":         v.get("labels", {}).get("age", ""),
-            "description": v.get("labels", {}).get("description", ""),
+            "description": v.get("labels", {}).get("description", "") or v.get("description", ""),
             "use_case":    v.get("labels", {}).get("use_case", ""),
             "accent":      v.get("labels", {}).get("accent", ""),
             "labels":      v.get("labels", {}),
         }
         for v in all_voices
-        if _is_australian(v)
     ]
 
-    # Sort: females first (warmer for healthcare), then alphabetically
-    australian.sort(key=lambda v: (0 if v["gender"].lower() == "female" else 1, v["name"]))
+    # Sort: females first, then alphabetically by name
+    voices.sort(key=lambda v: (0 if v["gender"].lower() == "female" else 1, v["name"].lower()))
 
-    return {"voices": australian, "total": len(australian)}
+    return {"voices": voices, "total": len(voices)}
 
 
 @router.get("/{ad_id}/voice-conversations")
