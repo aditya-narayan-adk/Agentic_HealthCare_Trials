@@ -446,6 +446,17 @@ async def list_australian_voices(
 
     all_voices: List[Dict[str, Any]] = data.get("voices", [])
 
+    def _is_australian(v: Dict[str, Any]) -> bool:
+        labels = v.get("labels", {})
+        searchable = " ".join([
+            str(labels.get("accent", "")),
+            str(labels.get("description", "")),
+            str(labels.get("use_case", "")),
+            str(v.get("name", "")),
+            str(v.get("description", "")),
+        ]).lower()
+        return "australian" in searchable or "aussie" in searchable
+
     australian = [
         {
             "voice_id":    v.get("voice_id", ""),
@@ -459,7 +470,7 @@ async def list_australian_voices(
             "labels":      v.get("labels", {}),
         }
         for v in all_voices
-        if "australian" in str(v.get("labels", {}).get("accent", "")).lower()
+        if _is_australian(v)
     ]
 
     # Sort: females first (warmer for healthcare), then alphabetically
