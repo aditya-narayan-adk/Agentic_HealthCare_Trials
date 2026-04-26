@@ -1732,8 +1732,6 @@ function CampaignDetailPageInner() {
                 );
               })()}
             </SectionCard>
-          )}
-
             </>
           )}
         </div>
