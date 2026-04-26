@@ -1674,8 +1674,8 @@ function CampaignDetailPageInner() {
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 0, borderRadius: 10, border: "1px solid var(--color-card-border)", overflow: "hidden" }}>
                       {/* Table header */}
-                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 80px 40px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
-                        {["Name", "Age", "Phone", "Eligibility", "Source", "", ""].map((h) => (
+                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 1.5fr 1fr 32px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
+                        {["Name", "Age", "Phone", "Eligibility", "Source", ""].map((h) => (
                           <span key={h} style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
                         ))}
                       </div>
@@ -1696,7 +1696,7 @@ function CampaignDetailPageInner() {
                               setParticipantAppointments(p.appointment ? [p.appointment] : []);
                             }}
                             style={{
-                              display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 80px 40px",
+                              display: "grid", gridTemplateColumns: "2fr 1fr 1.5fr 1.5fr 1fr 32px",
                               gap: 0, padding: "12px 16px", cursor: "pointer",
                               borderBottom: idx < filtered.length - 1 ? "1px solid var(--color-card-border)" : "none",
                               backgroundColor: "var(--color-card-bg)",
@@ -1713,21 +1713,17 @@ function CampaignDetailPageInner() {
                               {es.label}
                             </span>
                             <span style={{
-                              display: "inline-block", padding: "2px 8px", borderRadius: 20,
-                              fontSize: "0.7rem", fontWeight: 700,
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              padding: "3px 10px", borderRadius: 20, justifySelf: "start",
+                              fontSize: "0.72rem", fontWeight: 700,
                               backgroundColor: `${ss.color}18`, color: ss.color,
                               border: `1px solid ${ss.color}40`,
                             }}>
+                              {p.source === "voicebot" && <Phone size={11} />}
+                              {p.source === "chatbot" && <MessageSquare size={11} />}
                               {ss.label}
                             </span>
-                            {p.voice_sessions?.length > 0 ? (
-                              <Phone size={13} style={{ color: "var(--color-accent)", alignSelf: "center" }} title="Has voice call" />
-                            ) : p.source === "chatbot" ? (
-                              <MessageSquare size={13} style={{ color: "#7c3aed", alignSelf: "center" }} title="Chatbot booking" />
-                            ) : (
-                              <span />
-                            )}
-                            <ChevronDown size={14} style={{ color: "var(--color-sidebar-text)", transform: "rotate(-90deg)" }} />
+                            <ChevronDown size={14} style={{ color: "var(--color-sidebar-text)", transform: "rotate(-90deg)", justifySelf: "end", alignSelf: "center" }} />
                           </div>
                         );
                       })}
@@ -1738,207 +1734,6 @@ function CampaignDetailPageInner() {
             </SectionCard>
           )}
 
-          {/* Conversation History — voicebot campaigns only */}
-            {ad.ad_type?.includes("voicebot") && (
-              <SectionCard title="Conversation History" subtitle="Past voice sessions from the voicebot">
-                {convHistoryLoading ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>
-                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…
-                  </div>
-                ) : convHistory.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "32px 0" }}>
-                    <PhoneCall size={28} style={{ color: "var(--color-card-border)", margin: "0 auto 10px" }} />
-                    <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.85rem" }}>No conversations yet.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {convHistory.map(c => {
-                      const isOpen = selectedConvHistory?.conversation_id === c.conversation_id;
-                      const tEntry = convTranscriptMap[c.conversation_id];
-                      return (
-                        <div key={c.conversation_id} style={{ borderRadius: 8, border: `1px solid ${isOpen ? "var(--color-accent)" : "var(--color-card-border)"}`, backgroundColor: "var(--color-card-bg)", overflow: "hidden", transition: "border-color 0.15s" }}>
-                          {/* Tile header */}
-                          <div
-                            onClick={() => handleSelectConvHistory(c)}
-                            style={{ padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                          >
-                            <div>
-                              <p style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)", fontFamily: "ui-monospace, monospace", margin: 0 }}>
-                                {c.conversation_id?.slice(0, 16)}…
-                              </p>
-                              {c.start_time && (
-                                <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: 2, marginBottom: 0 }}>
-                                  {new Date(c.start_time * 1000).toLocaleString()}
-                                </p>
-                              )}
-                            </div>
-                            <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", textTransform: "capitalize" }}>{c.status}</span>
-                          </div>
-
-                          {/* Inline transcript + recording + analysis */}
-                          {isOpen && (
-                            <div style={{ borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-                              {/* Voice recording player */}
-                              <div>
-                                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: 8 }}>
-                                  Recording
-                                </p>
-                                {tEntry?.audioLoading ? (
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.78rem" }}>
-                                    <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Loading audio…
-                                  </div>
-                                ) : tEntry?.audioUrl ? (
-                                  <audio controls src={tEntry.audioUrl} style={{ width: "100%", height: 36 }} />
-                                ) : (
-                                  <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>No recording available.</p>
-                                )}
-                              </div>
-
-                              {/* Transcript */}
-                              <div>
-                                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: 8 }}>
-                                  Transcript
-                                </p>
-                                {tEntry?.loading ? (
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.78rem" }}>
-                                    <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Loading transcript…
-                                  </div>
-                                ) : tEntry?.error ? (
-                                  <p style={{ fontSize: "0.78rem", color: "#ef4444" }}>{tEntry.error}</p>
-                                ) : tEntry?.data ? (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 280, overflowY: "auto" }}>
-                                    {(tEntry.data.transcript || []).map((turn, i) => (
-                                      <div key={i} style={{ display: "flex", gap: 10 }}>
-                                        <span style={{
-                                          fontSize: "0.7rem", fontWeight: 700, minWidth: 40, flexShrink: 0, marginTop: 2,
-                                          color: turn.role === "agent" ? "var(--color-accent)" : "var(--color-sidebar-text)",
-                                        }}>
-                                          {turn.role === "agent" ? "Agent" : "User"}
-                                        </span>
-                                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.55, margin: 0 }}>
-                                          {turn.message}
-                                        </p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>No transcript data.</p>
-                                )}
-                              </div>
-
-                              {/* AI Analysis */}
-                              <div style={{ borderTop: "1px solid var(--color-card-border)", paddingTop: 14 }}>
-                                {tEntry?.analysisError && (
-                                  <p style={{ fontSize: "0.78rem", color: "#ef4444", marginBottom: 8 }}>{tEntry.analysisError}</p>
-                                )}
-                                <ConversationAnalysis
-                                  analysis={tEntry?.analysis || null}
-                                  loading={tEntry?.analysisLoading || false}
-                                  onReanalyze={() => handleAnalyzeConvHistory(c.conversation_id)}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <div style={{ marginTop: 12 }}>
-                  <button
-                    onClick={() => {
-                      setConvHistoryLoading(true);
-                      adsAPI.listVoiceConversations(id)
-                        .then((r) => setConvHistory(r.conversations || []))
-                        .catch(() => {})
-                        .finally(() => setConvHistoryLoading(false));
-                    }}
-                    className="btn--ghost"
-                    style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 6 }}
-                  >
-                    <RefreshCw size={12} /> Refresh
-                  </button>
-                </div>
-              </SectionCard>
-            )}
-
-          {/* Chat Sessions — website/chatbot campaigns */}
-            {(ad.ad_type?.includes("chatbot") || ad.ad_type?.includes("website")) && (
-              <SectionCard
-                title="Chatbot Sessions"
-                subtitle="Conversations from the landing page chatbot"
-              >
-                {chatSessionsLoading ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>
-                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…
-                  </div>
-                ) : chatSessions.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "32px 0" }}>
-                    <MessageSquare size={28} style={{ color: "var(--color-card-border)", margin: "0 auto 10px" }} />
-                    <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.85rem" }}>No chat sessions yet.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {chatSessions.map((cs) => {
-                      const identifier = cs.session_id?.slice(0, 12) ?? cs.id?.slice(0, 12);
-                      return (
-                        <div key={cs.id} style={{ border: "1px solid var(--color-card-border)", borderRadius: 10, overflow: "hidden" }}>
-                          {/* Header */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
-                            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-input-text)", fontFamily: "ui-monospace, monospace" }}>
-                              visitor·{identifier}
-                            </span>
-                            <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginLeft: "auto" }}>
-                              {cs.message_count} messages
-                            </span>
-                            <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
-                              {cs.created_at ? new Date(cs.created_at).toLocaleString() : ""}
-                            </span>
-                          </div>
-                          {/* Analysis */}
-                          <div style={{ padding: "14px 16px", backgroundColor: "var(--color-card-bg)" }}>
-                            <ConversationAnalysis
-                              analysis={cs.chat_analysis}
-                              sessionId={cs.id}
-                              loading={!!analysisLoading[cs.id]}
-                              onReanalyze={async () => {
-                                setAnalysisLoading(prev => ({ ...prev, [cs.id]: true }));
-                                try {
-                                  const result = await analysisAPI.analyzeChatSession(id, cs.id);
-                                  setChatSessions(prev => prev.map(s =>
-                                    s.id === cs.id ? { ...s, chat_analysis: result } : s
-                                  ));
-                                } catch (e) {
-                                  console.error("Chat analysis failed", e);
-                                } finally {
-                                  setAnalysisLoading(prev => ({ ...prev, [cs.id]: false }));
-                                }
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <div style={{ marginTop: 12 }}>
-                  <button
-                    onClick={() => {
-                      setChatSessionsLoading(true);
-                      analysisAPI.listChatSessions(id)
-                        .then((r) => setChatSessions(r.sessions || []))
-                        .catch(() => {})
-                        .finally(() => setChatSessionsLoading(false));
-                    }}
-                    className="btn--ghost"
-                    style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 6 }}
-                  >
-                    <RefreshCw size={12} /> Refresh
-                  </button>
-                </div>
-              </SectionCard>
-            )}
             </>
           )}
         </div>
